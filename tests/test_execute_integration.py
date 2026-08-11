@@ -110,6 +110,27 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
 
         self.assertEqual([title for title, _ in self.scrobbled], ['Song2'])
 
+    def test_multi_day_gap_recovery_is_treated_as_calibration(self):
+        """Regression test: after a gap long enough that every previously tracked
+        row is stale (e.g. days of a broken cookie), the recovery run must
+        re-calibrate instead of scrobbling today's already-elapsed songs with
+        guessed timestamps."""
+        self.history[:] = [SONG_1, SONG_2]
+        process = self.new_process()
+        process.execute()  # calibration on "day 1"
+
+        process.conn.execute("UPDATE run_state SET last_success_at = strftime('%s','now','-3 days')")
+        process.conn.commit()
+
+        # "Today" is now a different day - a completely different set of songs,
+        # none of which match the stale rows from before the gap.
+        self.history[:] = [SONG_3]
+        process.execute()
+
+        self.assertEqual(self.scrobbled, [])
+        rows = process.conn.execute('SELECT track_name FROM scrobbles').fetchall()
+        self.assertEqual([r[0] for r in rows], ['Song3'])
+
     def test_dry_run_never_writes_to_the_database(self):
         self.history[:] = [SONG_1, SONG_2]
         process = self.new_process(dry_run=True)

@@ -257,9 +257,6 @@ class ImprovedProcess:
                 'max_array_position': row[4] or row[3]  # Use array_position if max is NULL
             })
 
-        # Determine if this is first time scrobbling
-        is_first_time = len(database_songs) == 0
-
         # Clean up database: remove songs not in today's history
         if database_songs:
             songs_to_delete = []
@@ -296,6 +293,10 @@ class ImprovedProcess:
                             WHERE track_name = ? AND artist_name = ? AND album_name = ?
                         ''', (song['title'], song['artist'], song['album']))
                     self.conn.commit()
+
+        # Checked after cleanup, not on the raw row count, so a run recovering from a
+        # multi-day gap (all prior rows stale) calibrates instead of guessing timestamps.
+        is_first_time = len(database_songs) == 0
 
         # Determine which songs to scrobble using smart position tracking
         songs_to_process = self.position_tracker.detect_songs_to_scrobble(
