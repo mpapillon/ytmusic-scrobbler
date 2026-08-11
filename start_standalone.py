@@ -8,6 +8,7 @@ Standalone YouTube Music Last.fm Scrobbler
 - Robust error handling and categorization
 """
 import os
+import sys
 import time
 import lastpy
 import sqlite3
@@ -23,7 +24,22 @@ from typing import List, Dict, Optional
 # Import our new modules
 from ytmusic_fetcher import get_ytmusic_history_from_cookie
 from date_detection import is_today_song, get_unknown_date_values, get_detected_languages
-from scrobble_utils import SmartScrobbler, PositionTracker, FailureType, compute_scrobble_window
+from scrobble_utils import (
+    SmartScrobbler, PositionTracker, FailureType, compute_scrobble_window,
+    log_info, log_warning, log_error,
+)
+
+# sysexits.h-inspired exit codes so a cron wrapper can react differently per
+# failure category without parsing message text (see plan/discussion): AUTH
+# needs a human (renew cookie/session), NETWORK/TEMPORARY/LASTFM are worth
+# retrying on the next scheduled run, UNKNOWN means investigate the code.
+EXIT_CODES = {
+    FailureType.AUTH: 77,        # EX_NOPERM
+    FailureType.NETWORK: 75,     # EX_TEMPFAIL
+    FailureType.TEMPORARY: 75,   # EX_TEMPFAIL
+    FailureType.LASTFM: 75,      # EX_TEMPFAIL
+    FailureType.UNKNOWN: 70,     # EX_SOFTWARE
+}
 
 load_dotenv()
 
@@ -102,7 +118,7 @@ class ImprovedProcess:
         cursor.close()
 
     def get_token(self):
-        print("Waiting for Last.fm authentication...")
+        log_info("Waiting for Last.fm authentication...")
         auth_url = f"https://www.last.fm/api/auth/?api_key={self.api_key}&cb=http://localhost:5588"
 
         with TokenServer(('localhost', 5588), TokenHandler) as httpd:
@@ -118,7 +134,7 @@ class ImprovedProcess:
         return token
 
     def get_session(self, token):
-        print("Getting Last.fm session...")
+        log_info("Getting Last.fm session...")
         xml_response = lastpy.authorize(token)
         try:
             root = ET.fromstring(xml_response)
@@ -126,7 +142,7 @@ class ImprovedProcess:
             set_key('.env', 'LASTFM_SESSION', session_key)
             return session_key
         except Exception as e:
-            print(f"Error getting session: {xml_response}")
+            log_error(f"Getting Last.fm session: {xml_response}")
             raise Exception(e)
 
     def get_cookie_from_env_or_input(self) -> str:
@@ -134,19 +150,16 @@ class ImprovedProcess:
         cookie = os.environ.get('YTMUSIC_COOKIE')
 
         if not cookie:
-            print("\\n" + "="*80)
-            print("YouTube Music Cookie Required")
-            print("="*80)
+            print("YouTube Music cookie required.")
             print("Please copy your YouTube Music cookie from your browser.")
-            print("\\nTo get your cookie:")
+            print("To get your cookie:")
             print("1. Go to https://music.youtube.com in your browser")
             print("2. Open Developer Tools (F12)")
             print("3. Go to Network tab")
             print("4. Refresh the page")
             print("5. Find any request to music.youtube.com")
             print("6. Copy the entire 'Cookie' header value")
-            print("\\nThe cookie should contain '__Secure-3PAPISID=' among other values.")
-            print("-"*80)
+            print("The cookie should contain '__Secure-3PAPISID=' among other values.")
 
             cookie = input("Paste your YouTube Music cookie here: ").strip()
 
@@ -155,38 +168,30 @@ class ImprovedProcess:
                 save_cookie = input("Save cookie to .env file for future use? (y/n): ").lower().startswith('y')
                 if save_cookie:
                     set_key('.env', 'YTMUSIC_COOKIE', cookie)
-                    print("Cookie saved to .env file")
+                    log_info("Cookie saved to .env file")
 
         if not cookie:
             raise ValueError("YouTube Music cookie is required")
 
         return cookie
 
-    def handle_authentication_error(self, error: Exception) -> bool:
-        """Handle authentication errors and provide user guidance"""
-        print(f"\\n❌ Authentication Error: {str(error)}")
-        print("\\n" + "="*80)
-        print("YouTube Music Authentication Failed")
-        print("="*80)
-        print("Your YouTube Music cookie appears to be expired or invalid.")
-        print("\\nPlease update your cookie:")
-        print("1. Go to https://music.youtube.com and sign in")
-        print("2. Copy the new cookie from Developer Tools")
-        print("3. Run this script again")
-        print("\\nNote: Cookies typically expire after a few hours or days.")
-        return False
+    def handle_authentication_error(self, error: Exception) -> None:
+        """Log an authentication failure with guidance for the user"""
+        log_error(f"YouTube Music authentication failed: {error}")
+        log_error("Your YouTube Music cookie appears to be expired or invalid. Please update it:")
+        print("1. Go to https://music.youtube.com and sign in", file=sys.stderr)
+        print("2. Copy the new cookie from Developer Tools", file=sys.stderr)
+        print("3. Run this script again", file=sys.stderr)
 
-    def execute(self):
-        """Main execution logic with improved error handling and features"""
-        # Get YouTube Music cookie
-        try:
-            cookie = self.get_cookie_from_env_or_input()
-        except ValueError as e:
-            print(f"Error: {e}")
-            return False
+    def execute(self) -> Optional[FailureType]:
+        """Run the full fetch/filter/scrobble flow. Returns None on success, or the
+        FailureType that ended the run early."""
+        # Get YouTube Music cookie (raises ValueError if unavailable - a config
+        # problem for the caller to handle, not a categorized runtime failure)
+        cookie = self.get_cookie_from_env_or_input()
 
         if self.dry_run:
-            print("🔍 DRY RUN MODE: No songs will actually be scrobbled to Last.fm")
+            log_info("Dry run mode: no songs will actually be scrobbled to Last.fm.")
 
         last_success_row = self.conn.execute(
             'SELECT last_success_at FROM run_state WHERE id = 1'
@@ -199,45 +204,47 @@ class ImprovedProcess:
                 token = self.get_token()
                 self.session = self.get_session(token)
             except Exception as e:
-                print(f"Failed to authenticate with Last.fm: {e}")
-                return False
+                failure_type = self.scrobbler.categorize_error(e)
+                log_error(f"Failed to authenticate with Last.fm: {e} ({failure_type.value})")
+                return failure_type
 
+        log_info("Fetching YouTube Music history...")
         try:
-            print("Fetching YouTube Music history...")
             # Use our new HTML-based history fetcher (no YTMusic API dependency)
             history = get_ytmusic_history_from_cookie(cookie)
-            print(f"Retrieved {len(history)} songs from history")
-
         except Exception as error:
             failure_type = self.scrobbler.categorize_error(error)
 
             if failure_type == FailureType.AUTH:
-                return self.handle_authentication_error(error)
+                self.handle_authentication_error(error)
             else:
-                print(f"Error fetching history: {error}")
-                print(f"Error type: {failure_type.value}")
-                return False
+                log_error(f"Failed to fetch history: {error} ({failure_type.value})")
+            return failure_type
 
-        # Filter songs played today using multilingual detection
-        print("Filtering songs played today...")
+        log_info(f"Retrieved {len(history)} songs from history")
+
+        print()
+        log_info("Filtering songs played today...")
         today_songs = [song for song in history if is_today_song(song.get('playedAt'))]
 
         # Log unknown date values for future expansion
         unknown_values = get_unknown_date_values(history)
         if unknown_values:
-            print(f"Unknown date formats detected: {', '.join(unknown_values)}")
-            print("Please report these to the developer for future support")
+            log_warning(f"Unknown date formats detected: {', '.join(unknown_values)} "
+                        f"(please report these to the developer)")
 
         # Log detected languages
         detected_languages = get_detected_languages(history)
         if detected_languages:
-            print(f"Detected languages in today's songs: {', '.join(detected_languages)}")
+            log_info(f"Detected languages in today's songs: {', '.join(detected_languages)}")
 
-        print(f"Found {len(today_songs)} songs played today")
+        log_info(f"Found {len(today_songs)} songs played today")
 
         if len(today_songs) == 0:
-            print("No songs played today. Nothing to scrobble.")
-            return True
+            log_info("Nothing to scrobble.")
+            return None
+
+        print()
 
         # Get existing songs from database
         cursor = self.conn.cursor()
@@ -284,9 +291,9 @@ class ImprovedProcess:
                 ]
 
                 if self.dry_run:
-                    print(f"[DRY RUN] Would remove {len(songs_to_delete)} songs no longer in today's history")
+                    log_info(f"[DRY RUN] Would remove {len(songs_to_delete)} songs no longer in today's history")
                 else:
-                    print(f"Removing {len(songs_to_delete)} songs no longer in today's history")
+                    log_info(f"Removing {len(songs_to_delete)} songs no longer in today's history")
                     for song in songs_to_delete:
                         cursor.execute('''
                             DELETE FROM scrobbles
@@ -307,11 +314,11 @@ class ImprovedProcess:
         songs_to_scrobble = [s for s in songs_to_process if s['should_scrobble']]
         total_to_scrobble = len(songs_to_scrobble)
 
-        print(f"Processing {len(songs_to_process)} songs ({total_to_scrobble} will be scrobbled)")
-
         if is_first_time:
-            print(f"🆕 Calibration run: recording {len(today_songs)} songs as a baseline, nothing scrobbled. "
-                  f"Future runs will scrobble new plays going forward.")
+            log_info(f"Calibration run: recording {len(today_songs)} songs as a baseline, nothing scrobbled. "
+                     f"Future runs will scrobble new plays going forward.")
+
+        log_info(f"Processing {len(songs_to_process)} songs ({total_to_scrobble} will be scrobbled)")
 
         # Bound the fake-timestamp distribution window to the real elapsed time
         # since the last successful run, never going before the start of today -
@@ -345,7 +352,7 @@ class ImprovedProcess:
 
                     if self.dry_run:
                         songs_scrobbled += 1
-                        print(f"[DRY RUN] Would scrobble ({action}): {song['title']} by {song['artist']}")
+                        log_info(f"[DRY RUN] Would scrobble ({action}): \"{song['title']}\" by {song['artist']}")
                         scrobble_position += 1
                     else:
                         # Scrobble the song
@@ -353,10 +360,10 @@ class ImprovedProcess:
 
                         if success:
                             songs_scrobbled += 1
-                            print(f"{action}: {song['title']} by {song['artist']}")
+                            log_info(f"{action}: \"{song['title']}\" by {song['artist']}")
                             scrobble_position += 1
                         else:
-                            print(f"FAILED: {song['title']} by {song['artist']} (Last.fm rejected)")
+                            log_info(f"FAILED: \"{song['title']}\" by {song['artist']} (Last.fm rejected)")
 
                 if self.dry_run:
                     # Skip database writes so a dry run has no side effects
@@ -390,12 +397,10 @@ class ImprovedProcess:
 
             except Exception as error:
                 failure_type = self.scrobbler.categorize_error(error)
-                print(f"ERROR processing '{song['title']}' by {song['artist']}: {error}")
-                print(f"Error type: {failure_type.value}")
+                log_error(f'Failed to process "{song["title"]}" by {song["artist"]}: {error} ({failure_type.value})')
 
                 # Continue processing other songs unless it's an auth error
                 if failure_type == FailureType.AUTH:
-                    print("Authentication error detected. Stopping execution.")
                     had_fatal_error = True
                     break
 
@@ -408,16 +413,16 @@ class ImprovedProcess:
 
         cursor.close()
 
-        print(f"\n✅ Scrobbling completed!" if not self.dry_run else "\n✅ Dry run completed!")
-        print(f"📊 Summary:")
-        print(f"  - Total songs in today's history: {len(today_songs)}")
+        print()
         if self.dry_run:
-            print(f"  - Songs that would be scrobbled: {songs_scrobbled}")
+            log_info(f"Run complete: {len(today_songs)} today, {songs_scrobbled} would be scrobbled")
         else:
-            print(f"  - Songs successfully scrobbled: {songs_scrobbled}")
-            print(f"  - Songs processed (DB updated): {len(songs_to_process)}")
+            log_info(f"Run complete: {len(today_songs)} today, {songs_scrobbled} scrobbled, "
+                     f"{len(songs_to_process)} processed")
 
-        return True
+        if had_fatal_error:
+            return FailureType.AUTH
+        return None
 
 
 def main():
@@ -430,28 +435,23 @@ def main():
     )
     args = parser.parse_args()
 
-    print("🎵 Standalone YouTube Music Last.fm Scrobbler")
-    print("=" * 50)
-
     try:
         process = ImprovedProcess(dry_run=args.dry_run)
-        success = process.execute()
+        failure = process.execute()
+        if failure is None:
+            return 0
+        return EXIT_CODES.get(failure, 70)
 
-        if success:
-            print("\n🎉 Process completed successfully!")
-        else:
-            print("\n❌ Process failed. Please check the errors above.")
-            return 1
-
+    except ValueError as e:
+        log_error(str(e))
+        return 78
     except KeyboardInterrupt:
-        print("\\n⏹️  Process interrupted by user")
-        return 1
+        log_warning("Interrupted by user")
+        return 130
     except Exception as e:
-        print(f"\\n💥 Unexpected error: {e}")
-        return 1
-
-    return 0
+        log_error(f"Unexpected error: {e}")
+        return 70
 
 
 if __name__ == '__main__':
-    exit(main())
+    sys.exit(main())

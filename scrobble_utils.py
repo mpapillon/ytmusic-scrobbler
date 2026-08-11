@@ -2,6 +2,7 @@
 Smart scrobbling utilities with improved timestamp distribution and error handling
 Based on ytmusic-scrobbler-web worker implementation
 """
+import sys
 import time
 import math
 from enum import Enum
@@ -10,6 +11,18 @@ from typing import Dict, List, Optional, Tuple
 import hashlib
 import xml.etree.ElementTree as ET
 import lastpy
+
+
+def log_info(message: str) -> None:
+    print(message)
+
+
+def log_warning(message: str) -> None:
+    print(f"Warning: {message}", file=sys.stderr)
+
+
+def log_error(message: str) -> None:
+    print(f"Error: {message}", file=sys.stderr)
 
 
 class FailureType(Enum):
@@ -197,59 +210,46 @@ class SmartScrobbler:
         # Create API signature
         api_sig = self._hash_request(params)
 
-        try:
-            # Use lastpy for scrobbling (assuming it's available)
-            xml_response = lastpy.scrobble(
-                params['track'],
-                params['artist'],
-                params['album'],
-                last_fm_session_key,
-                timestamp
-            )
+        # Use lastpy for scrobbling (assuming it's available)
+        xml_response = lastpy.scrobble(
+            params['track'],
+            params['artist'],
+            params['album'],
+            last_fm_session_key,
+            timestamp
+        )
 
-            # Parse XML response
-            root = ET.fromstring(xml_response)
-            scrobbles = root.find('scrobbles')
+        # Parse XML response
+        root = ET.fromstring(xml_response)
+        scrobbles = root.find('scrobbles')
 
-            if scrobbles is not None:
-                accepted = scrobbles.get('accepted', '0')
-                ignored = scrobbles.get('ignored', '0')
+        if scrobbles is not None:
+            accepted = scrobbles.get('accepted', '0')
+            ignored = scrobbles.get('ignored', '0')
 
-                # Log detailed response for debugging
-                print(f"  [Last.fm Response] accepted={accepted}, ignored={ignored}")
+            scrobble_elements = scrobbles.findall('scrobble')
+            for scrobble in scrobble_elements:
+                track_elem = scrobble.find('track')
+                artist_elem = scrobble.find('artist')
+                ignored_message = scrobble.find('ignoredMessage')
 
-                # Parse individual scrobble details
-                scrobble_elements = scrobbles.findall('scrobble')
-                for scrobble in scrobble_elements:
-                    track_elem = scrobble.find('track')
-                    artist_elem = scrobble.find('artist')
-                    timestamp_elem = scrobble.find('timestamp')
-                    ignored_message = scrobble.find('ignoredMessage')
+                track_corrected = track_elem.get('corrected', '0') if track_elem is not None else '0'
+                artist_corrected = artist_elem.get('corrected', '0') if artist_elem is not None else '0'
 
-                    track_corrected = track_elem.get('corrected', '0') if track_elem is not None else '0'
-                    artist_corrected = artist_elem.get('corrected', '0') if artist_elem is not None else '0'
+                if track_corrected != '0' or artist_corrected != '0':
+                    log_warning(
+                        f'Last.fm corrected "{song["title"]}" by {song["artist"]} -> '
+                        f'"{track_elem.text}" by "{artist_elem.text}"'
+                    )
 
-                    print(f"  [Scrobble Details]")
-                    print(f"    Track: {track_elem.text if track_elem is not None else 'N/A'} (corrected: {track_corrected})")
-                    print(f"    Artist: {artist_elem.text if artist_elem is not None else 'N/A'} (corrected: {artist_corrected})")
-                    print(f"    Timestamp: {timestamp_elem.text if timestamp_elem is not None else 'N/A'}")
+                if ignored_message is not None and ignored_message.text:
+                    log_warning(f'Last.fm ignored "{song["title"]}" by {song["artist"]}: {ignored_message.text}')
 
-                    if ignored_message is not None and ignored_message.text:
-                        print(f"    ⚠️  Ignored: {ignored_message.text}")
-                        code = ignored_message.get('code', 'unknown')
-                        print(f"    Ignore code: {code}")
+            # Return True if at least one scrobble was accepted (keeping original logic)
+            return accepted != '0' or ignored == '0'
 
-                # Return True if at least one scrobble was accepted (keeping original logic)
-                return accepted != '0' or ignored == '0'
-
-            print(f"  [Last.fm Response] No scrobbles element found in XML response")
-            print(f"  [Raw XML] {xml_response}")
-            return False
-
-        except Exception as e:
-            # Log the error but don't raise it - let caller handle it
-            print(f"Scrobble error for '{song['title']}' by {song['artist']}: {str(e)}")
-            raise e
+        log_warning(f'Unexpected Last.fm response for "{song["title"]}" by {song["artist"]}: no scrobbles element')
+        return False
 
     def calculate_timestamp(
         self,
