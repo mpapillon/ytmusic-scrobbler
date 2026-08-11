@@ -2,7 +2,7 @@
 """
 Standalone YouTube Music Last.fm Scrobbler
 - No external API dependencies (direct HTML page scraping)
-- Multilingual date detection (50+ languages)  
+- Multilingual date detection (50+ languages)
 - Smart timestamp distribution (logarithmic/linear)
 - Better position tracking and re-reproduction detection
 - Robust error handling and categorization
@@ -11,6 +11,7 @@ import os
 import time
 import lastpy
 import sqlite3
+import argparse
 import webbrowser
 import threading
 import http.server
@@ -50,12 +51,13 @@ class TokenServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 
 class ImprovedProcess:
-    def __init__(self):
+    def __init__(self, dry_run: bool = False):
+        self.dry_run = dry_run
         self.api_key = os.environ.get('LAST_FM_API')
         self.api_secret = os.environ.get('LAST_FM_API_SECRET')
         if not self.api_key or not self.api_secret:
             raise ValueError("Missing LAST_FM_API or LAST_FM_API_SECRET environment variables")
-        
+
         try:
             self.session = os.environ['LASTFM_SESSION']
         except KeyError:
@@ -64,7 +66,7 @@ class ImprovedProcess:
         # Initialize smart scrobbler
         self.scrobbler = SmartScrobbler(self.api_key, self.api_secret)
         self.position_tracker = PositionTracker()
-        
+
         # Database connection with improved schema
         self.conn = sqlite3.connect('./data.db')
         cursor = self.conn.cursor()
@@ -80,25 +82,25 @@ class ImprovedProcess:
                 is_first_time_scrobble BOOLEAN DEFAULT FALSE
             )
         ''')
-        
+
         # Add new columns if they don't exist (for backward compatibility)
         try:
             cursor.execute('ALTER TABLE scrobbles ADD COLUMN max_array_position INTEGER')
         except sqlite3.OperationalError:
             pass  # Column already exists
-        
+
         try:
             cursor.execute('ALTER TABLE scrobbles ADD COLUMN is_first_time_scrobble BOOLEAN DEFAULT FALSE')
         except sqlite3.OperationalError:
             pass  # Column already exists
-        
+
         self.conn.commit()
         cursor.close()
 
     def get_token(self):
         print("Waiting for Last.fm authentication...")
         auth_url = f"https://www.last.fm/api/auth/?api_key={self.api_key}&cb=http://localhost:5588"
-        
+
         with TokenServer(('localhost', 5588), TokenHandler) as httpd:
             webbrowser.open(auth_url)
             thread = threading.Thread(target=httpd.serve_forever)
@@ -126,7 +128,7 @@ class ImprovedProcess:
     def get_cookie_from_env_or_input(self) -> str:
         """Get YouTube Music cookie from environment or user input"""
         cookie = os.environ.get('YTMUSIC_COOKIE')
-        
+
         if not cookie:
             print("\\n" + "="*80)
             print("YouTube Music Cookie Required")
@@ -141,19 +143,19 @@ class ImprovedProcess:
             print("6. Copy the entire 'Cookie' header value")
             print("\\nThe cookie should contain '__Secure-3PAPISID=' among other values.")
             print("-"*80)
-            
+
             cookie = input("Paste your YouTube Music cookie here: ").strip()
-            
+
             if cookie:
                 # Optionally save it to .env for future use
                 save_cookie = input("Save cookie to .env file for future use? (y/n): ").lower().startswith('y')
                 if save_cookie:
                     set_key('.env', 'YTMUSIC_COOKIE', cookie)
                     print("Cookie saved to .env file")
-        
+
         if not cookie:
             raise ValueError("YouTube Music cookie is required")
-        
+
         return cookie
 
     def handle_authentication_error(self, error: Exception) -> bool:
@@ -179,8 +181,11 @@ class ImprovedProcess:
             print(f"Error: {e}")
             return False
 
-        # Get Last.fm session if not available
-        if not self.session:
+        if self.dry_run:
+            print("🔍 DRY RUN MODE: No songs will actually be scrobbled to Last.fm")
+
+        # Get Last.fm session if not available (not needed in dry-run mode)
+        if not self.session and not self.dry_run:
             try:
                 token = self.get_token()
                 self.session = self.get_session(token)
@@ -193,10 +198,10 @@ class ImprovedProcess:
             # Use our new HTML-based history fetcher (no YTMusic API dependency)
             history = get_ytmusic_history_from_cookie(cookie)
             print(f"Retrieved {len(history)} songs from history")
-            
+
         except Exception as error:
             failure_type = self.scrobbler.categorize_error(error)
-            
+
             if failure_type == FailureType.AUTH:
                 return self.handle_authentication_error(error)
             else:
@@ -207,13 +212,13 @@ class ImprovedProcess:
         # Filter songs played today using multilingual detection
         print("Filtering songs played today...")
         today_songs = [song for song in history if is_today_song(song.get('playedAt'))]
-        
+
         # Log unknown date values for future expansion
         unknown_values = get_unknown_date_values(history)
         if unknown_values:
             print(f"Unknown date formats detected: {', '.join(unknown_values)}")
             print("Please report these to the developer for future support")
-        
+
         # Log detected languages
         detected_languages = get_detected_languages(history)
         if detected_languages:
@@ -228,11 +233,11 @@ class ImprovedProcess:
         # Get existing songs from database
         cursor = self.conn.cursor()
         db_songs = cursor.execute('''
-            SELECT track_name, artist_name, album_name, array_position, 
+            SELECT track_name, artist_name, album_name, array_position,
                    max_array_position, is_first_time_scrobble
             FROM scrobbles
         ''').fetchall()
-        
+
         # Convert to dict format for easier processing
         database_songs = []
         for row in db_songs:
@@ -247,30 +252,33 @@ class ImprovedProcess:
 
         # Determine if this is first time scrobbling
         is_first_time = len(database_songs) == 0
-        
+
         # Clean up database: remove songs not in today's history
         if database_songs:
             songs_to_delete = []
             for db_song in database_songs:
                 found = False
                 for today_song in today_songs:
-                    if (today_song['title'] == db_song['title'] and 
-                        today_song['artist'] == db_song['artist'] and 
+                    if (today_song['title'] == db_song['title'] and
+                        today_song['artist'] == db_song['artist'] and
                         today_song['album'] == db_song['album']):
                         found = True
                         break
-                
+
                 if not found:
                     songs_to_delete.append(db_song)
-            
+
             if songs_to_delete:
-                print(f"Removing {len(songs_to_delete)} songs no longer in today's history")
-                for song in songs_to_delete:
-                    cursor.execute('''
-                        DELETE FROM scrobbles 
-                        WHERE track_name = ? AND artist_name = ? AND album_name = ?
-                    ''', (song['title'], song['artist'], song['album']))
-                self.conn.commit()
+                if self.dry_run:
+                    print(f"[DRY RUN] Would remove {len(songs_to_delete)} songs no longer in today's history")
+                else:
+                    print(f"Removing {len(songs_to_delete)} songs no longer in today's history")
+                    for song in songs_to_delete:
+                        cursor.execute('''
+                            DELETE FROM scrobbles
+                            WHERE track_name = ? AND artist_name = ? AND album_name = ?
+                        ''', (song['title'], song['artist'], song['album']))
+                    self.conn.commit()
 
         # Determine which songs to scrobble using smart position tracking
         max_first_time_songs = 10  # Can be made configurable
@@ -283,7 +291,7 @@ class ImprovedProcess:
         total_to_scrobble = len(songs_to_scrobble)
 
         print(f"Processing {len(songs_to_process)} songs ({total_to_scrobble} will be scrobbled)")
-        
+
         if is_first_time and total_to_scrobble > 0:
             print(f"First-time user: Limiting scrobbles to {min(total_to_scrobble, max_first_time_songs)} most recent songs")
 
@@ -295,7 +303,7 @@ class ImprovedProcess:
             position = item['position']
             should_scrobble = item['should_scrobble']
             reason = item['reason']
-            
+
             try:
                 if should_scrobble:
                     # Calculate smart timestamp
@@ -305,90 +313,111 @@ class ImprovedProcess:
                         is_pro_user=False,  # Can be made configurable
                         is_first_time=is_first_time
                     )
-                    
-                    # Scrobble the song
-                    success = self.scrobbler.scrobble_song(song, self.session, timestamp)
-                    
-                    if success:
+
+                    action = "NEW" if reason == "new_song" else f"RE-SCROBBLE ({reason})" if reason == "reproduction" else "FIRST-TIME"
+
+                    if self.dry_run:
                         songs_scrobbled += 1
-                        action = "NEW" if reason == "new_song" else f"RE-SCROBBLE ({reason})" if reason == "reproduction" else "FIRST-TIME"
-                        print(f"{action}: {song['title']} by {song['artist']}")
+                        print(f"[DRY RUN] Would scrobble ({action}): {song['title']} by {song['artist']}")
                         scrobble_position += 1
                     else:
-                        print(f"FAILED: {song['title']} by {song['artist']} (Last.fm rejected)")
-                
+                        # Scrobble the song
+                        success = self.scrobbler.scrobble_song(song, self.session, timestamp)
+
+                        if success:
+                            songs_scrobbled += 1
+                            print(f"{action}: {song['title']} by {song['artist']}")
+                            scrobble_position += 1
+                        else:
+                            print(f"FAILED: {song['title']} by {song['artist']} (Last.fm rejected)")
+
+                if self.dry_run:
+                    # Skip database writes so a dry run has no side effects
+                    continue
+
                 # Update/insert in database
                 existing_song = cursor.execute('''
-                    SELECT id, max_array_position FROM scrobbles 
+                    SELECT id, max_array_position FROM scrobbles
                     WHERE track_name = ? AND artist_name = ? AND album_name = ?
                 ''', (song['title'], song['artist'], song['album'])).fetchone()
-                
+
                 if existing_song:
                     # Update existing song
                     song_id, current_max = existing_song
                     new_max = max(current_max or position, position)
-                    
+
                     cursor.execute('''
-                        UPDATE scrobbles 
+                        UPDATE scrobbles
                         SET array_position = ?, max_array_position = ?, scrobbled_at = CURRENT_TIMESTAMP
                         WHERE id = ?
                     ''', (position, new_max, song_id))
                 else:
                     # Insert new song
                     cursor.execute('''
-                        INSERT INTO scrobbles 
+                        INSERT INTO scrobbles
                         (track_name, artist_name, album_name, array_position, max_array_position, is_first_time_scrobble)
                         VALUES (?, ?, ?, ?, ?, ?)
                     ''', (song['title'], song['artist'], song['album'], position, position, is_first_time))
-                
+
                 self.conn.commit()
-                
+
             except Exception as error:
                 failure_type = self.scrobbler.categorize_error(error)
                 print(f"ERROR processing '{song['title']}' by {song['artist']}: {error}")
                 print(f"Error type: {failure_type.value}")
-                
+
                 # Continue processing other songs unless it's an auth error
                 if failure_type == FailureType.AUTH:
                     print("Authentication error detected. Stopping execution.")
                     break
 
         cursor.close()
-        
-        print(f"\\n✅ Scrobbling completed!")
+
+        print(f"\n✅ Scrobbling completed!" if not self.dry_run else "\n✅ Dry run completed!")
         print(f"📊 Summary:")
         print(f"  - Total songs in today's history: {len(today_songs)}")
-        print(f"  - Songs successfully scrobbled: {songs_scrobbled}")
-        print(f"  - Songs processed (DB updated): {len(songs_to_process)}")
-        
+        if self.dry_run:
+            print(f"  - Songs that would be scrobbled: {songs_scrobbled}")
+        else:
+            print(f"  - Songs successfully scrobbled: {songs_scrobbled}")
+            print(f"  - Songs processed (DB updated): {len(songs_to_process)}")
+
         if is_first_time:
             print(f"  - First-time user: Limited to {max_first_time_songs} scrobbles")
-        
+
         return True
 
 
 def main():
     """Main entry point"""
+    parser = argparse.ArgumentParser(description="Standalone YouTube Music Last.fm Scrobbler")
+    parser.add_argument(
+        '--dry-run',
+        action='store_true',
+        help="Fetch and process history without actually scrobbling to Last.fm or updating the local database"
+    )
+    args = parser.parse_args()
+
     print("🎵 Standalone YouTube Music Last.fm Scrobbler")
     print("=" * 50)
-    
+
     try:
-        process = ImprovedProcess()
+        process = ImprovedProcess(dry_run=args.dry_run)
         success = process.execute()
-        
+
         if success:
-            print("\\n🎉 Process completed successfully!")
+            print("\n🎉 Process completed successfully!")
         else:
-            print("\\n❌ Process failed. Please check the errors above.")
+            print("\n❌ Process failed. Please check the errors above.")
             return 1
-            
+
     except KeyboardInterrupt:
         print("\\n⏹️  Process interrupted by user")
         return 1
     except Exception as e:
         print(f"\\n💥 Unexpected error: {e}")
         return 1
-    
+
     return 0
 
 
