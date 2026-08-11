@@ -80,10 +80,7 @@ If you prefer the original YTMusic API approach:
 **✅ Advantages:**
 - **No API dependencies** - Direct HTML scraping eliminates API rate limits
 - **Multilingual support** - Detects "Today" in 50+ languages (English, Spanish, Chinese, Russian, Arabic, etc.)
-- **Smart timestamp distribution**:
-  - First-time users: Logarithmic over 24 hours
-  - Regular users: Logarithmic over 1 hour
-  - Pro users: Linear over 5 minutes
+- **Smart timestamp distribution** - Logarithmic spread across the time since your last successful run, clamped to the current day. First run ever only calibrates position tracking (nothing is scrobbled).
 - **Better duplicate detection** - Tracks re-reproductions and position changes
 - **Robust error handling** - Categorizes and handles different error types
 - **Enhanced logging** - Better visibility into processing and language detection
@@ -122,8 +119,12 @@ CREATE TABLE scrobbles (
     album_name TEXT,
     scrobbled_at TEXT DEFAULT CURRENT_TIMESTAMP,
     array_position INTEGER,
-    max_array_position INTEGER,          -- NEW: Tracks highest position
-    is_first_time_scrobble BOOLEAN       -- NEW: First-time user flag
+    max_array_position INTEGER           -- Tracks highest position
+)
+
+CREATE TABLE run_state (                 -- Single row, last successful run
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    last_success_at INTEGER
 )
 ```
 
@@ -147,10 +148,11 @@ CREATE TABLE scrobbles (
 1. **Fetches YouTube Music history page** directly via HTTP
 2. **Extracts embedded JSON data** from HTML using regex parsing
 3. **Detects today's songs** using multilingual date detection (50+ languages)
-4. **Smart position tracking** - Identifies new songs and re-reproductions
-5. **Calculates intelligent timestamps** - Different strategies for different user types
-6. **Scrobbles to Last.fm** with proper error handling and retry logic
-7. **Updates database** with enhanced tracking information
+4. **First run ever**: records today's songs as a position-tracking baseline, scrobbles nothing
+5. **Later runs**: smart position tracking identifies new songs and re-reproductions
+6. **Calculates timestamps**: logarithmic spread across the time since your last successful run, clamped to today
+7. **Scrobbles to Last.fm** with proper error handling and retry logic
+8. **Updates database** with enhanced tracking information
 
 ### Legacy Version Process  
 1. **Uses YTMusic API** to fetch history data
@@ -244,11 +246,12 @@ Both versions can be deployed to servers, but have different requirements:
 ### Standalone Version Deployment
 1. Run locally first to complete Last.fm OAuth
 2. Copy `.env` file to server (includes `LASTFM_SESSION`)
-3. Set up cron job or scheduler:
+3. Set up cron job at any interval you like - timing adapts to the real gap between runs:
    ```bash
-   # Run daily at 23:59
-   59 23 * * * /path/to/python /path/to/start_standalone.py
+   # e.g. every 15 minutes
+   */15 * * * * /path/to/python /path/to/start_standalone.py
    ```
+4. Test with `--dry-run` first to preview what a run would do without side effects
 
 ### Legacy Version Deployment  
 1. Run locally first for Last.fm OAuth and YTMusic setup

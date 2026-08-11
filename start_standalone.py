@@ -3,7 +3,7 @@
 Standalone YouTube Music Last.fm Scrobbler
 - No external API dependencies (direct HTML page scraping)
 - Multilingual date detection (50+ languages)
-- Smart timestamp distribution (logarithmic/linear)
+- Smart timestamp distribution (logarithmic, bounded to the real elapsed time since the last successful run)
 - Better position tracking and re-reproduction detection
 - Robust error handling and categorization
 """
@@ -18,13 +18,12 @@ import http.server
 import socketserver
 import xml.etree.ElementTree as ET
 from dotenv import load_dotenv, set_key
-from datetime import datetime
 from typing import List, Dict, Optional
 
 # Import our new modules
 from ytmusic_fetcher import get_ytmusic_history_from_cookie
 from date_detection import is_today_song, get_unknown_date_values, get_detected_languages
-from scrobble_utils import SmartScrobbler, PositionTracker, FailureType
+from scrobble_utils import SmartScrobbler, PositionTracker, FailureType, compute_scrobble_window
 
 load_dotenv()
 
@@ -78,8 +77,7 @@ class ImprovedProcess:
                 album_name TEXT,
                 scrobbled_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 array_position INTEGER,
-                max_array_position INTEGER,
-                is_first_time_scrobble BOOLEAN DEFAULT FALSE
+                max_array_position INTEGER
             )
         ''')
 
@@ -89,10 +87,16 @@ class ImprovedProcess:
         except sqlite3.OperationalError:
             pass  # Column already exists
 
-        try:
-            cursor.execute('ALTER TABLE scrobbles ADD COLUMN is_first_time_scrobble BOOLEAN DEFAULT FALSE')
-        except sqlite3.OperationalError:
-            pass  # Column already exists
+        # Single-row table tracking the last successful (non-dry-run) run, used to
+        # bound the fake-timestamp distribution window to the real elapsed gap
+        # since that run instead of a fixed guess.
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS run_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                last_success_at INTEGER
+            )
+        ''')
+        cursor.execute('INSERT OR IGNORE INTO run_state (id, last_success_at) VALUES (1, NULL)')
 
         self.conn.commit()
         cursor.close()
@@ -184,6 +188,11 @@ class ImprovedProcess:
         if self.dry_run:
             print("🔍 DRY RUN MODE: No songs will actually be scrobbled to Last.fm")
 
+        last_success_row = self.conn.execute(
+            'SELECT last_success_at FROM run_state WHERE id = 1'
+        ).fetchone()
+        last_success_at = last_success_row[0] if last_success_row else None
+
         # Get Last.fm session if not available (not needed in dry-run mode)
         if not self.session and not self.dry_run:
             try:
@@ -233,8 +242,7 @@ class ImprovedProcess:
         # Get existing songs from database
         cursor = self.conn.cursor()
         db_songs = cursor.execute('''
-            SELECT track_name, artist_name, album_name, array_position,
-                   max_array_position, is_first_time_scrobble
+            SELECT track_name, artist_name, album_name, array_position, max_array_position
             FROM scrobbles
         ''').fetchall()
 
@@ -246,8 +254,7 @@ class ImprovedProcess:
                 'artist': row[1],
                 'album': row[2],
                 'array_position': row[3],
-                'max_array_position': row[4] or row[3],  # Use array_position if max is NULL
-                'is_first_time': bool(row[5])
+                'max_array_position': row[4] or row[3]  # Use array_position if max is NULL
             })
 
         # Determine if this is first time scrobbling
@@ -269,6 +276,16 @@ class ImprovedProcess:
                     songs_to_delete.append(db_song)
 
             if songs_to_delete:
+                # Drop these from the in-memory list too, not just the DB table -
+                # otherwise a song that legitimately replays later in the day still
+                # matches its stale in-memory entry and gets wrongly treated as
+                # "already known" instead of a new play.
+                deleted_keys = {(s['title'], s['artist'], s['album']) for s in songs_to_delete}
+                database_songs = [
+                    s for s in database_songs
+                    if (s['title'], s['artist'], s['album']) not in deleted_keys
+                ]
+
                 if self.dry_run:
                     print(f"[DRY RUN] Would remove {len(songs_to_delete)} songs no longer in today's history")
                 else:
@@ -281,9 +298,8 @@ class ImprovedProcess:
                     self.conn.commit()
 
         # Determine which songs to scrobble using smart position tracking
-        max_first_time_songs = 10  # Can be made configurable
         songs_to_process = self.position_tracker.detect_songs_to_scrobble(
-            today_songs, database_songs, is_first_time, max_first_time_songs
+            today_songs, database_songs, is_first_time
         )
 
         # Count how many will actually be scrobbled
@@ -292,11 +308,21 @@ class ImprovedProcess:
 
         print(f"Processing {len(songs_to_process)} songs ({total_to_scrobble} will be scrobbled)")
 
-        if is_first_time and total_to_scrobble > 0:
-            print(f"First-time user: Limiting scrobbles to {min(total_to_scrobble, max_first_time_songs)} most recent songs")
+        if is_first_time:
+            print(f"🆕 Calibration run: recording {len(today_songs)} songs as a baseline, nothing scrobbled. "
+                  f"Future runs will scrobble new plays going forward.")
+
+        # Bound the fake-timestamp distribution window to the real elapsed time
+        # since the last successful run, never going before the start of today -
+        # so a long gap (e.g. an expired cookie) gets caught up over its real span
+        # instead of compressing everything near "now", and a short cron interval
+        # doesn't get stretched into a misleadingly wide spread.
+        now = int(time.time())
+        window_start, window_end = compute_scrobble_window(last_success_at, now)
 
         songs_scrobbled = 0
         scrobble_position = 0
+        had_fatal_error = False
 
         for item in songs_to_process:
             song = item['song']
@@ -310,11 +336,11 @@ class ImprovedProcess:
                     timestamp = self.scrobbler.calculate_timestamp(
                         scrobble_position,
                         total_to_scrobble,
-                        is_pro_user=False,  # Can be made configurable
-                        is_first_time=is_first_time
+                        window_start,
+                        window_end
                     )
 
-                    action = "NEW" if reason == "new_song" else f"RE-SCROBBLE ({reason})" if reason == "reproduction" else "FIRST-TIME"
+                    action = "NEW" if reason == "new_song" else "RE-SCROBBLE"
 
                     if self.dry_run:
                         songs_scrobbled += 1
@@ -355,9 +381,9 @@ class ImprovedProcess:
                     # Insert new song
                     cursor.execute('''
                         INSERT INTO scrobbles
-                        (track_name, artist_name, album_name, array_position, max_array_position, is_first_time_scrobble)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    ''', (song['title'], song['artist'], song['album'], position, position, is_first_time))
+                        (track_name, artist_name, album_name, array_position, max_array_position)
+                        VALUES (?, ?, ?, ?, ?)
+                    ''', (song['title'], song['artist'], song['album'], position, position))
 
                 self.conn.commit()
 
@@ -369,7 +395,15 @@ class ImprovedProcess:
                 # Continue processing other songs unless it's an auth error
                 if failure_type == FailureType.AUTH:
                     print("Authentication error detected. Stopping execution.")
+                    had_fatal_error = True
                     break
+
+        # Only mark this as a successful run if it wasn't cut short by a fatal
+        # error - otherwise the next run's window would wrongly start from "now"
+        # instead of correctly spanning the gap this run failed to cover.
+        if not self.dry_run and not had_fatal_error:
+            cursor.execute('UPDATE run_state SET last_success_at = ? WHERE id = 1', (now,))
+            self.conn.commit()
 
         cursor.close()
 
@@ -381,9 +415,6 @@ class ImprovedProcess:
         else:
             print(f"  - Songs successfully scrobbled: {songs_scrobbled}")
             print(f"  - Songs processed (DB updated): {len(songs_to_process)}")
-
-        if is_first_time:
-            print(f"  - First-time user: Limited to {max_first_time_songs} scrobbles")
 
         return True
 

@@ -44,38 +44,38 @@ pip install -r requirements.txt
 ### Standalone Version (Recommended)
 ```bash
 python start_standalone.py
+python start_standalone.py --dry-run  # preview, no Last.fm calls or DB writes
 ```
+Designed to run repeatedly via cron at any interval - timing adapts to the real gap between runs.
 
 ### Original Version (Legacy)
 ```bash
 python start.py
 ```
 
-The standalone version includes:
-- No YTMusic API dependency (direct HTML scraping)
-- Multilingual date detection (50+ languages)
-- Smart timestamp distribution
-- Better error handling
-- Improved position tracking
+## Running Tests
+
+```bash
+python -m unittest discover -s tests -t .
+```
 
 ## Code Architecture
 
-- **Single-file application**: `start.py` contains all logic
-- **Process class**: Main application logic with methods:
-  - `get_token()`: Handles Last.fm OAuth flow via local web server (port 5588)
-  - `get_session()`: Converts OAuth token to session key
-  - `execute()`: Main processing logic
-- **SQLite database**: `data.db` tracks scrobbled songs to prevent duplicates
-- **Authentication flow**: Uses `TokenHandler` and `TokenServer` for OAuth callback handling
+- `start_standalone.py`: primary implementation (`ImprovedProcess.execute()`)
+- `scrobble_utils.py`: `ScrobbleTimestampCalculator` (fake timestamps), `PositionTracker` (new/replay detection), `SmartScrobbler` (Last.fm API + error categorization)
+- `date_detection.py`: multilingual "Today" detection (50+ languages)
+- `ytmusic_fetcher.py`: HTML-scraping history fetcher (no `ytmusicapi`)
+- `start.py`: legacy, self-contained, uses `ytmusicapi` + `browser.json`, shares only `lastpy` with the above
+- `lastpy/`: custom Last.fm API client (`authorize`, `scrobble`)
 
 ## Key Dependencies
 
-- `ytmusicapi`: YouTube Music API client
+- `ytmusicapi`: YouTube Music API client (legacy version only)
 - `lastpy`: Last.fm scrobbling (custom library, not in requirements)
 - `python-dotenv`: Environment variable management
 - `sqlite3`: Built-in SQLite support
 
-## Database Schema
+## Database Schema (standalone version, `data.db`)
 
 ```sql
 CREATE TABLE scrobbles (
@@ -84,25 +84,34 @@ CREATE TABLE scrobbles (
     artist_name TEXT,
     album_name TEXT,
     scrobbled_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    array_position INTEGER
+    array_position INTEGER,
+    max_array_position INTEGER
+)
+
+CREATE TABLE run_state (  -- single row, last successful (non-dry-run) run
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    last_success_at INTEGER
 )
 ```
+Legacy `start.py` uses a minimal schema (no `max_array_position`, no `run_state`).
 
 ## Important Files
 
-- `start.py`: Main application script
-- `browser.json`: YouTube Music authentication (created by `ytmusicapi browser`)
+- `start_standalone.py` / `start.py`: entry points
+- `browser.json`: legacy YouTube Music auth (`ytmusicapi browser`)
 - `.env`: API keys and session tokens
-- `data.db`: SQLite database for tracking scrobbles
-- `environment.yml`: Conda environment specification
-- `requirements.txt`: Pip dependencies
+- `data.db`: SQLite tracking + run state
+- `environment.yml`, `requirements.txt`: dependencies
 
-## Scrobbling Logic
+## Scrobbling Logic (standalone version)
 
 The application processes YouTube Music history by:
 1. Fetching history and filtering "Today" tracks
-2. Cleaning local database to match current day's tracks
-3. Identifying new/updated tracks based on array position
-4. Scrobbling to Last.fm with artificial timestamps (90-second intervals)
-5. Skipping artists ending with "- Topic"
-6. Using track name as album name when album is missing
+2. Drops stale position-tracking rows no longer in today's list, from both the DB and the in-memory comparison.
+3. First run ever (empty DB) only calibrates position tracking - nothing is scrobbled.
+4. Later runs scrobble genuinely new or replayed songs, detected via position tracking.
+5. Fake timestamps spread logarithmically across `[last successful run, now]`, clamped to the start of the current day.
+6. Skips artists ending with "- Topic".
+7. Uses track name as album name when album is missing.
+
+Legacy `start.py` uses fixed 90-second-interval spacing instead.
