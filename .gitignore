@@ -160,7 +160,6 @@ cython_debug/
 #.idea/
 
 oauth.json
-browser.json
 watch-history.json
 .vscode/*
 data.db

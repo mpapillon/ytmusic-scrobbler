@@ -1,17 +1,10 @@
 # YOUTUBE MUSIC LAST.FM SCROBBLER
 
-The YouTube Music Last.fm Scrobbler is a Python application that fetches your YouTube Music listening history from the last 24 hours and scrobbles it to Last.fm. This project offers two versions with different approaches and capabilities.
-
-## 📋 Available Versions
-
-| Version | File | Approach | Best For |
-|---------|------|----------|----------|
-| **🌟 Standalone** | `start_standalone.py` | Direct HTML scraping | **Recommended** - More reliable, multilingual, smarter |
-| **Legacy** | `start.py` | YTMusic API | Simple setup, backward compatibility |
+The YouTube Music Last.fm Scrobbler is a Python application that fetches your YouTube Music listening history from the last 24 hours and scrobbles it to Last.fm.
 
 ---
 
-## 🚀 Quick Start (Standalone Version - Recommended)
+## 🚀 Quick Start
 
 ### Prerequisites
 
@@ -33,7 +26,7 @@ The YouTube Music Last.fm Scrobbler is a Python application that fetches your Yo
    LAST_FM_API_SECRET=your_lastfm_api_secret
    ```
 
-### Run Standalone Version
+### Run
 
 ```bash
 python start_standalone.py
@@ -52,65 +45,27 @@ On first run, you'll be prompted to:
 
 ---
 
-## 🔧 Legacy Version Setup
-
-If you prefer the original YTMusic API approach:
-
-### Additional Setup for Legacy Version
-
-1. Install ytmusicapi and authenticate:
-   ```bash
-   pip install ytmusicapi==1.10.3
-   ytmusicapi browser
-   ```
-   
-2. Follow the [ytmusicapi browser authentication](https://ytmusicapi.readthedocs.io/en/stable/setup/browser.html) instructions to create `browser.json`
-
-3. Run the legacy version:
-   ```bash
-   python start.py
-   ```
-
----
-
-## 📊 Version Comparison
+## ✨ Features
 
 ### 🌟 Standalone Version (`start_standalone.py`)
 
-**✅ Advantages:**
 - **No API dependencies** - Direct HTML scraping eliminates API rate limits
 - **Multilingual support** - Detects "Today" in 50+ languages (English, Spanish, Chinese, Russian, Arabic, etc.)
 - **Smart timestamp distribution** - Logarithmic spread across the time since your last successful run, clamped to the current day. First run ever only calibrates position tracking (nothing is scrobbled).
 - **Better duplicate detection** - Tracks re-reproductions and position changes
 - **Robust error handling** - Categorizes and handles different error types
 - **Enhanced logging** - Better visibility into processing and language detection
-- **No browser.json needed** - Just requires your browser cookie
 
 **⚠️ Considerations:**
 - Requires copying cookie from browser (but provides detailed instructions)
 - Cookie needs periodic refresh (browser will notify when needed)
 
-### 📜 Legacy Version (`start.py`)
-
-**✅ Advantages:**
-- **Simple setup** - Uses YTMusic API with `browser.json`
-- **Established approach** - Original working implementation
-- **No cookie handling** - API-based authentication
-
-**⚠️ Limitations:**
-- **API dependency** - Subject to rate limits and API changes
-- **English-only date detection** - Only recognizes "Today" in English
-- **Fixed timestamp intervals** - Simple 90-second spacing
-- **Basic error handling** - Limited error categorization
-- **Requires ytmusicapi** - Additional dependency for API access
-
 ---
 
 ## 🗄️ Database Schema
 
-Both versions use SQLite to track scrobbled songs and prevent duplicates:
+SQLite is used to track scrobbled songs and prevent duplicates:
 
-### Standalone Version Schema
 ```sql
 CREATE TABLE scrobbles (
     id INTEGER PRIMARY KEY,
@@ -128,23 +83,10 @@ CREATE TABLE run_state (                 -- Single row, last successful run
 )
 ```
 
-### Legacy Version Schema
-```sql
-CREATE TABLE scrobbles (
-    id INTEGER PRIMARY KEY,
-    track_name TEXT,
-    artist_name TEXT,  
-    album_name TEXT,
-    scrobbled_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    array_position INTEGER
-)
-```
-
 ---
 
 ## 📝 How It Works
 
-### Standalone Version Process
 1. **Fetches YouTube Music history page** directly via HTTP
 2. **Extracts embedded JSON data** from HTML using regex parsing
 3. **Detects today's songs** using multilingual date detection (50+ languages)
@@ -154,19 +96,11 @@ CREATE TABLE scrobbles (
 7. **Scrobbles to Last.fm** with proper error handling and retry logic
 8. **Updates database** with enhanced tracking information
 
-### Legacy Version Process  
-1. **Uses YTMusic API** to fetch history data
-2. **Filters "Today" songs** (English only)
-3. **Simple duplicate prevention** based on position
-4. **Fixed timestamp intervals** (90 seconds apart)
-5. **Basic scrobbling** to Last.fm
-6. **Database updates** with basic tracking
-
 ---
 
-## 🌍 Multilingual Support (Standalone Only)
+## 🌍 Multilingual Support
 
-The standalone version automatically detects "Today" in these language families:
+The scrobbler automatically detects "Today" in these language families:
 
 - **Latin**: English, Spanish, Portuguese, Italian, French, German, Dutch, etc.
 - **Cyrillic**: Russian, Ukrainian, Bulgarian, Serbian, etc.
@@ -178,21 +112,10 @@ The standalone version automatically detects "Today" in these language families:
 
 ---
 
-## 🚀 Migration from Legacy to Standalone
-
-1. **Stop using browser.json** - No longer needed
-2. **Get YouTube Music cookie** - Follow the instructions above  
-3. **Add to .env file**: `YTMUSIC_COOKIE=your_cookie_here`
-4. **Run standalone version**: `python start_standalone.py`
-5. **Database migration** - Automatic (new columns added seamlessly)
-
----
-
 ## 🔧 Configuration
 
 ### Environment Variables (.env)
 ```bash
-# Required for both versions
 LAST_FM_API=your_lastfm_api_key
 LAST_FM_API_SECRET=your_lastfm_api_secret
 
@@ -204,17 +127,14 @@ YTMUSIC_COOKIE=your_complete_browser_cookie
 ```
 
 ### Files Used
-| File | Standalone | Legacy | Description |
-|------|------------|--------|-------------|
-| `.env` | ✅ Required | ✅ Required | API keys and tokens |
-| `browser.json` | ❌ Not needed | ✅ Required | YTMusic API auth |
-| `data.db` | ✅ Enhanced | ✅ Basic | SQLite tracking database |
+| File      | Description              |
+|-----------|--------------------------|
+| `.env`    | API keys and tokens      |
+| `data.db` | SQLite tracking database |
 
 ---
 
 ## 🐛 Troubleshooting
-
-### Common Issues - Standalone Version
 
 **❌ "Cookie is missing __Secure-3PAPISID"**
 - Ensure you copied the complete cookie from Developer Tools
@@ -228,22 +148,10 @@ YTMUSIC_COOKIE=your_complete_browser_cookie
 - Check your YouTube Music language - multilingual detection should work
 - Report unknown date formats to help improve detection
 
-### Common Issues - Legacy Version
-
-**❌ "browser.json not found"**
-- Run `ytmusicapi browser` first to generate authentication
-
-**❌ "No results found"**  
-- YTMusic API response format may have changed
-- Check if ytmusicapi needs updating
-
 ---
 
 ## 📋 Deployment
 
-Both versions can be deployed to servers, but have different requirements:
-
-### Standalone Version Deployment
 1. Run locally first to complete Last.fm OAuth
 2. Copy `.env` file to server (includes `LASTFM_SESSION`)
 3. Set up cron job at any interval you like - timing adapts to the real gap between runs:
@@ -253,16 +161,11 @@ Both versions can be deployed to servers, but have different requirements:
    ```
 4. Test with `--dry-run` first to preview what a run would do without side effects
 
-### Legacy Version Deployment  
-1. Run locally first for Last.fm OAuth and YTMusic setup
-2. Copy `.env` and `browser.json` to server
-3. Set up cron job with both files
-
 ---
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please focus improvements on the standalone version as it's the recommended approach.
+Contributions are welcome!
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/amazing-feature`
@@ -280,4 +183,4 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 ## 🎵 Enjoy Your Scrobbles!
 
-Whether you choose the standalone or legacy version, you'll be able to seamlessly sync your YouTube Music listening history with Last.fm. The standalone version is recommended for its reliability, multilingual support, and smart features, but both versions will get your music scrobbled! 🎶
+Scrobble your Youtube Music listening history with last.fm: reliability, multilingual support, and smart smart timestamp handling. 🎶

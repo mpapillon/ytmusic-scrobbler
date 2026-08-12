@@ -41,17 +41,11 @@ pip install -r requirements.txt
 
 ## Running the Application
 
-### Standalone Version (Recommended)
 ```bash
 python start_standalone.py
 python start_standalone.py --dry-run  # preview, no Last.fm calls or DB writes
 ```
 Designed to run repeatedly via cron at any interval - timing adapts to the real gap between runs.
-
-### Original Version (Legacy)
-```bash
-python start.py
-```
 
 ## Running Tests
 
@@ -65,17 +59,15 @@ python -m unittest discover -s tests -t .
 - `scrobble_utils.py`: `ScrobbleTimestampCalculator` (fake timestamps), `PositionTracker` (new/replay detection), `SmartScrobbler` (Last.fm API + error categorization)
 - `date_detection.py`: multilingual "Today" detection (50+ languages)
 - `ytmusic_fetcher.py`: HTML-scraping history fetcher (no `ytmusicapi`)
-- `start.py`: legacy, self-contained, uses `ytmusicapi` + `browser.json`, shares only `lastpy` with the above
 - `lastpy/`: custom Last.fm API client (`authorize`, `scrobble`)
 
 ## Key Dependencies
 
-- `ytmusicapi`: YouTube Music API client (legacy version only)
 - `lastpy`: Last.fm scrobbling (custom library, not in requirements)
 - `python-dotenv`: Environment variable management
 - `sqlite3`: Built-in SQLite support
 
-## Database Schema (standalone version, `data.db`)
+## Database Schema (`data.db`)
 
 ```sql
 CREATE TABLE scrobbles (
@@ -93,17 +85,15 @@ CREATE TABLE run_state (  -- single row, last successful (non-dry-run) run
     last_success_at INTEGER
 )
 ```
-Legacy `start.py` uses a minimal schema (no `max_array_position`, no `run_state`).
 
 ## Important Files
 
-- `start_standalone.py` / `start.py`: entry points
-- `browser.json`: legacy YouTube Music auth (`ytmusicapi browser`)
+- `start_standalone.py`: entry point
 - `.env`: API keys and session tokens
 - `data.db`: SQLite tracking + run state
 - `environment.yml`, `requirements.txt`: dependencies
 
-## Scrobbling Logic (standalone version)
+## Scrobbling Logic
 
 The application processes YouTube Music history by:
 1. Fetching history and filtering "Today" tracks
@@ -113,5 +103,3 @@ The application processes YouTube Music history by:
 5. Fake timestamps spread logarithmically across `[last successful run, now]`, clamped to the start of the current day.
 6. Skips artists ending with "- Topic".
 7. Uses track name as album name when album is missing.
-
-Legacy `start.py` uses fixed 90-second-interval spacing instead.
