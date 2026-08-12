@@ -33,6 +33,13 @@ class FailureType(Enum):
     UNKNOWN = "UNKNOWN"
 
 
+def start_of_day(now: int) -> int:
+    """Midnight (local time) of the calendar day containing `now`."""
+    return int(
+        datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    )
+
+
 def compute_scrobble_window(last_success_at: Optional[int], now: int) -> Tuple[int, int]:
     """
     Compute the [window_start, now] range fake timestamps get distributed across.
@@ -44,10 +51,7 @@ def compute_scrobble_window(last_success_at: Optional[int], now: int) -> Tuple[i
     today (there's no reliable timestamp for anything YouTube Music files under
     "Yesterday" or older).
     """
-    start_of_today = int(
-        datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
-    )
-    window_start = max(last_success_at, start_of_today) if last_success_at else start_of_today
+    window_start = max(last_success_at, start_of_day(now)) if last_success_at else start_of_day(now)
     return window_start, now
 
 

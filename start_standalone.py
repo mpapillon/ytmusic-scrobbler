@@ -25,7 +25,7 @@ from typing import List, Dict, Optional
 from ytmusic_fetcher import get_ytmusic_history_from_cookie
 from date_detection import is_today_song, get_unknown_date_values, get_detected_languages
 from scrobble_utils import (
-    SmartScrobbler, PositionTracker, FailureType, compute_scrobble_window,
+    SmartScrobbler, PositionTracker, FailureType, compute_scrobble_window, start_of_day,
     log_info, log_warning, log_error,
 )
 
@@ -301,9 +301,8 @@ class ImprovedProcess:
                         ''', (song['title'], song['artist'], song['album']))
                     self.conn.commit()
 
-        # Checked after cleanup, not on the raw row count, so a run recovering from a
-        # multi-day gap (all prior rows stale) calibrates instead of guessing timestamps.
-        is_first_time = len(database_songs) == 0
+        now = int(time.time())
+        is_first_time = last_success_at is None or last_success_at < start_of_day(now)
 
         # Determine which songs to scrobble using smart position tracking
         songs_to_process = self.position_tracker.detect_songs_to_scrobble(
@@ -320,12 +319,11 @@ class ImprovedProcess:
 
         log_info(f"Processing {len(songs_to_process)} songs ({total_to_scrobble} will be scrobbled)")
 
-        # Bound the fake-timestamp distribution window to the real elapsed time
-        # since the last successful run, never going before the start of today -
-        # so a long gap (e.g. an expired cookie) gets caught up over its real span
-        # instead of compressing everything near "now", and a short cron interval
-        # doesn't get stretched into a misleadingly wide spread.
-        now = int(time.time())
+        # Bound the fake-timestamp distribution window to the real elapsed time since
+        # the last successful run, never going before the start of today - so a short
+        # cron interval keeps the window tight instead of getting stretched into a
+        # misleadingly wide spread. (Gaps wide enough to lose that same-day anchor are
+        # calibration runs, per is_first_time above, and never reach this window.)
         window_start, window_end = compute_scrobble_window(last_success_at, now)
 
         songs_scrobbled = 0

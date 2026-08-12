@@ -5,6 +5,7 @@ DB, with network calls (YouTube Music history fetch, Last.fm scrobble) mocked ou
 import os
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -110,11 +111,11 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
 
         self.assertEqual([title for title, _ in self.scrobbled], ['Song2'])
 
-    def test_multi_day_gap_recovery_is_treated_as_calibration(self):
-        """Regression test: after a gap long enough that every previously tracked
-        row is stale (e.g. days of a broken cookie), the recovery run must
-        re-calibrate instead of scrobbling today's already-elapsed songs with
-        guessed timestamps."""
+    def test_gap_crossing_a_day_boundary_is_treated_as_calibration(self):
+        """Regression test: once last_success_at falls on a previous calendar day,
+        there's no same-day anchor left to place guessed timestamps against. So the
+        run must re-calibrate instead of guessing, regardless of whether the gap
+        was one day or several."""
         self.history[:] = [SONG_1, SONG_2]
         process = self.new_process()
         process.execute()  # calibration on "day 1"
@@ -130,6 +131,56 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
         self.assertEqual(self.scrobbled, [])
         rows = process.conn.execute('SELECT track_name FROM scrobbles').fetchall()
         self.assertEqual([r[0] for r in rows], ['Song3'])
+
+    def test_same_day_gap_with_wiped_db_still_scrobbles_normally(self):
+        """Regression test: a run where nothing has been played yet today exits early
+        without cleaning up yesterday's stale rows. The next run - the one that
+        actually has today's songs - wipes those stale rows too, emptying
+        database_songs, but last_success_at is still from earlier today (a real,
+        recent anchor), so this must scrobble normally rather than mistake the wiped
+        table for a fresh install and silently calibrate instead."""
+        self.history[:] = [SONG_1, SONG_2]
+        process = self.new_process()
+        process.execute()  # calibration on "day 1"
+
+        # Next run: nothing played yet today, exits early before cleanup runs.
+        self.history[:] = []
+        process.execute()
+
+        # Later the same day: a real play happens, in a today's-list that shares
+        # nothing with the still-present "day 1" rows.
+        self.history[:] = [SONG_3]
+        process.execute()
+
+        self.assertEqual([title for title, _ in self.scrobbled], ['Song3'])
+
+    def test_same_day_gap_anchors_timestamp_to_last_success_not_midnight(self):
+        """Regression test for the actual timestamp, not just whether a scrobble
+        happens: with a same-day last_success_at, the guessed window must start
+        there - not fall back to midnight, which would spread a short real gap
+        across the whole elapsed day instead of the real, much shorter one."""
+        self.history[:] = [SONG_1]
+        process = self.new_process()
+        process.execute()  # calibration on "day 1"
+
+        two_hours_ago = int(time.time()) - 2 * 3600
+        process.conn.execute('UPDATE run_state SET last_success_at = ?', (two_hours_ago,))
+        process.conn.commit()
+
+        # DB wiped by an intervening empty-today run, same as the reported bug -
+        # but last_success_at is still a real, recent, same-day anchor.
+        self.history[:] = []
+        process.execute()
+
+        self.history[:] = [SONG_3, SONG_2]  # two new plays today
+        process.execute()
+
+        self.assertEqual([title for title, _ in self.scrobbled], ['Song3', 'Song2'])
+        timestamps = [int(ts) for _, ts in self.scrobbled]
+        # The older of the two lands exactly at last_success_at (window_start) - a
+        # midnight fallback would place it several hours earlier than that instead.
+        self.assertEqual(min(timestamps), two_hours_ago)
+        self.assertGreater(max(timestamps), min(timestamps))
 
     def test_dry_run_never_writes_to_the_database(self):
         self.history[:] = [SONG_1, SONG_2]

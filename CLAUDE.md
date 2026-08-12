@@ -92,7 +92,7 @@ CREATE TABLE run_state (  -- single row, last successful (non-dry-run) run
 The application processes YouTube Music history by:
 1. Fetching history and filtering "Today" tracks
 2. Drops stale position-tracking rows no longer in today's list, from both the DB and the in-memory comparison.
-3. First run ever (empty DB) only calibrates position tracking - nothing is scrobbled.
+3. Runs with no same-day `last_success_at` (never run before, or last success was on a previous calendar day) only calibrate position tracking - nothing is scrobbled, since there's no same-day anchor to place guessed timestamps against.
 4. Later runs scrobble genuinely new or replayed songs, detected via position tracking.
 5. Fake timestamps spread logarithmically across `[last successful run, now]`, clamped to the start of the current day.
 6. Skips artists ending with "- Topic".
