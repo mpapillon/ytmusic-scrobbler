@@ -10,11 +10,7 @@ The YouTube Music Last.fm Scrobbler is a Python application that fetches your Yo
 
 1. Install Python 3.8+ and dependencies:
    ```bash
-   # Using conda (recommended)
-   conda env create -f environment.yml
-   conda activate ytmusic-scrobbler
-   
-   # OR using pip
+   # using pip (a venv is recommended)
    pip install -r requirements.txt
    ```
 

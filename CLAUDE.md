@@ -8,14 +8,8 @@ This is a Python script that fetches YouTube Music listening history from the la
 
 ## Environment Setup
 
-The project uses conda for environment management:
-
 ```bash
-# Create and activate environment
-conda env create -f environment.yml
-conda activate ytmusic-scrobbler
-
-# Alternative for pip-only setup
+# pip-only setup
 pip install -r requirements.txt
 ```
 
