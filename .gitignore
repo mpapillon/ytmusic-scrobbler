@@ -163,3 +163,4 @@ oauth.json
 watch-history.json
 .vscode/*
 data.db
+*.pyz

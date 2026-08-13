@@ -18,7 +18,7 @@ import threading
 import http.server
 import socketserver
 import xml.etree.ElementTree as ET
-from dotenv import load_dotenv, set_key
+from dotenv import find_dotenv, load_dotenv, set_key
 from typing import List, Dict, Optional
 
 # Import our new modules
@@ -41,7 +41,7 @@ EXIT_CODES = {
     FailureType.UNKNOWN: 70,     # EX_SOFTWARE
 }
 
-load_dotenv()
+load_dotenv(find_dotenv(usecwd=True))
 
 
 class TokenHandler(http.server.SimpleHTTPRequestHandler):
