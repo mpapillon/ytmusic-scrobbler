@@ -3,13 +3,12 @@ YouTube Music History Fetcher
 Direct HTML page scraping approach (no YTMusic API dependency)
 Based on ytmusic-scrobbler-web worker implementation
 """
-import re
-import json
 import hashlib
-import requests
-from typing import Dict, List, Optional, Tuple
-from datetime import datetime
+import json
+import re
 import time
+
+import requests
 
 
 class YTMusicFetcher:
@@ -60,8 +59,8 @@ class YTMusicFetcher:
         match = re.search(r"__Secure-3PAPISID=([^;]+)", raw_cookie)
         if not match:
             raise ValueError(
-                f"Cookie is missing the required __Secure-3PAPISID token. "
-                f"Your cookie appears to be incomplete or invalid."
+                "Cookie is missing the required __Secure-3PAPISID token. "
+                "Your cookie appears to be incomplete or invalid."
             )
         return match.group(1)
     
@@ -73,7 +72,7 @@ class YTMusicFetcher:
         hash_value = hashlib.sha1(data.encode()).hexdigest()
         return f"SAPISIDHASH {unix_timestamp}_{hash_value}"
     
-    def _get_visitor_id(self) -> Optional[str]:
+    def _get_visitor_id(self) -> str | None:
         """Get Google visitor ID from YouTube Music main page"""
         try:
             response = requests.get(
@@ -197,7 +196,7 @@ class YTMusicFetcher:
         
         return result
     
-    def _extract_initial_data_from_page(self, html: str) -> Optional[dict]:
+    def _extract_initial_data_from_page(self, html: str) -> dict | None:
         """Extract initialData from HTML page"""
         # Search for initialData.push patterns
         pattern = r"initialData\.push\(\{[^}]*data:\s*'([^']+)'"
@@ -232,8 +231,7 @@ class YTMusicFetcher:
                     cleaned_data = decoded_data.strip()
                     
                     # Remove trailing comma
-                    if cleaned_data.endswith(","):
-                        cleaned_data = cleaned_data[:-1]
+                    cleaned_data = cleaned_data.removesuffix(",")
                     
                     # Balance brackets and braces
                     open_braces = cleaned_data.count("{")
@@ -286,7 +284,7 @@ class YTMusicFetcher:
         
         return s
     
-    def _parse_ytmusic_response(self, data: dict) -> List[Dict[str, str]]:
+    def _parse_ytmusic_response(self, data: dict) -> list[dict[str, str]]:
         """Parse YouTube Music response data"""
         try:
             results = data.get("contents", {}).get("singleColumnBrowseResultsRenderer", {}).get("tabs", [{}])[0].get("tabRenderer", {}).get("content", {}).get("sectionListRenderer", {}).get("contents", [])
@@ -371,7 +369,7 @@ class YTMusicFetcher:
         
         return songs
     
-    def get_history(self) -> List[Dict[str, str]]:
+    def get_history(self) -> list[dict[str, str]]:
         """
         Get YouTube Music history by parsing HTML page
         Returns list of songs with title, artist, album, and playedAt
@@ -385,7 +383,7 @@ class YTMusicFetcher:
         return self._parse_ytmusic_response(initial_data)
 
 
-def get_ytmusic_history_from_cookie(cookie: str) -> List[Dict[str, str]]:
+def get_ytmusic_history_from_cookie(cookie: str) -> list[dict[str, str]]:
     """
     Convenience function to get YouTube Music history from cookie
     

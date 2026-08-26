@@ -2,14 +2,14 @@
 Smart scrobbling utilities with improved timestamp distribution and error handling
 Based on ytmusic-scrobbler-web worker implementation
 """
-import sys
-import time
-import math
-from enum import Enum
-from datetime import datetime
-from typing import Dict, List, Optional, Tuple
 import hashlib
+import math
+import sys
 import xml.etree.ElementTree as ET
+from datetime import datetime
+from enum import Enum
+from typing import Literal, NotRequired, TypedDict, final
+
 import lastpy
 
 
@@ -32,6 +32,19 @@ class FailureType(Enum):
     LASTFM = "LASTFM"
     UNKNOWN = "UNKNOWN"
 
+class DatabaseSong(TypedDict):
+    title: str
+    artist: str
+    album: str
+    array_position: int
+    max_array_position: int
+
+class SongToScrobble(TypedDict):
+    song: dict[str, str]          # élément de today_songs
+    position: int
+    reason: Literal['calibration', 'new_song', 'reproduction', 'position_update']
+    should_scrobble: bool
+    previous_position: NotRequired[int]
 
 def start_of_day(now: int) -> int:
     """Midnight (local time) of the calendar day containing `now`."""
@@ -40,7 +53,7 @@ def start_of_day(now: int) -> int:
     )
 
 
-def compute_scrobble_window(last_success_at: Optional[int], now: int) -> Tuple[int, int]:
+def compute_scrobble_window(last_success_at: int | None, now: int) -> tuple[int, int]:
     """
     Compute the [window_start, now] range fake timestamps get distributed across.
 
@@ -142,6 +155,7 @@ class ErrorCategorizer:
         return consecutive_failures >= thresholds.get(failure_type, 7)
 
 
+@final
 class SmartScrobbler:
     """Enhanced scrobbler with smart features"""
 
@@ -176,7 +190,7 @@ class SmartScrobbler:
 
         return s
 
-    def _hash_request(self, params: Dict[str, str]) -> str:
+    def _hash_request(self, params: dict[str, str]) -> str:
         """Create MD5 hash for Last.fm API request"""
         string = ""
         for key in sorted(params.keys()):
@@ -186,7 +200,7 @@ class SmartScrobbler:
 
     def scrobble_song(
         self,
-        song: Dict[str, str],
+        song: dict[str, str],
         last_fm_session_key: str,
         timestamp: str
     ) -> bool:
@@ -284,10 +298,10 @@ class PositionTracker:
 
     @staticmethod
     def detect_songs_to_scrobble(
-        today_songs: List[Dict[str, str]],
-        database_songs: List[Dict],
+        today_songs: list[dict[str, str]],
+        database_songs: list[DatabaseSong],
         is_first_time: bool = False
-    ) -> List[Dict]:
+    ) -> list[SongToScrobble]:
         """
         Determine which songs should be scrobbled based on position tracking
 
@@ -301,7 +315,7 @@ class PositionTracker:
         Returns:
             List of songs that should be scrobbled with their info
         """
-        songs_to_scrobble = []
+        songs_to_scrobble: list[SongToScrobble] = []
 
         if is_first_time:
             # First run ever: record today's songs as a baseline, scrobble nothing

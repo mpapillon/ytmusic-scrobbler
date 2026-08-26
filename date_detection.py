@@ -2,13 +2,13 @@
 Multilingual date detection for YouTube Music playedAt values
 Supports 50+ languages including Latin, Cyrillic, Arabic, CJK, and Indic scripts
 """
-from typing import Dict, Set, List, Optional, NamedTuple
+from typing import NamedTuple
 
 
 class DateDetectionResult(NamedTuple):
     is_today: bool
     is_yesterday: bool
-    detected_language: Optional[str]
+    detected_language: str | None
     original_value: str
 
 
@@ -150,7 +150,7 @@ YESTERDAY_TRANSLATIONS = {
 }
 
 
-def detect_date_value(played_at: Optional[str]) -> DateDetectionResult:
+def detect_date_value(played_at: str | None) -> DateDetectionResult:
     """
     Detect if a playedAt value represents today or yesterday in any supported language
     
@@ -197,27 +197,27 @@ def detect_date_value(played_at: Optional[str]) -> DateDetectionResult:
     )
 
 
-def is_today_song(played_at: Optional[str]) -> bool:
+def is_today_song(played_at: str | None) -> bool:
     """Check if a song was played today"""
     return detect_date_value(played_at).is_today
 
 
-def is_yesterday_song(played_at: Optional[str]) -> bool:
+def is_yesterday_song(played_at: str | None) -> bool:
     """Check if a song was played yesterday"""
     return detect_date_value(played_at).is_yesterday
 
 
-def get_all_today_variants() -> List[str]:
+def get_all_today_variants() -> list[str]:
     """Get all supported 'today' variants for debugging"""
     return list(TODAY_TRANSLATIONS.keys())
 
 
-def get_all_yesterday_variants() -> List[str]:
+def get_all_yesterday_variants() -> list[str]:
     """Get all supported 'yesterday' variants for debugging"""
     return list(YESTERDAY_TRANSLATIONS.keys())
 
 
-def get_unknown_date_values(songs: List[Dict[str, str]]) -> List[str]:
+def get_unknown_date_values(songs: list[dict[str, str]]) -> list[str]:
     """
     Get unknown playedAt values that should be logged for future expansion
     
@@ -227,7 +227,7 @@ def get_unknown_date_values(songs: List[Dict[str, str]]) -> List[str]:
     Returns:
         List of unknown date values
     """
-    unknown_values: Set[str] = set()
+    unknown_values: set[str] = set()
     
     for song in songs:
         played_at = song.get('playedAt')
@@ -239,7 +239,7 @@ def get_unknown_date_values(songs: List[Dict[str, str]]) -> List[str]:
     return list(unknown_values)
 
 
-def get_detected_languages(songs: List[Dict[str, str]]) -> Set[str]:
+def get_detected_languages(songs: list[dict[str, str]]) -> set[str]:
     """
     Get all detected languages from songs played today
     
@@ -249,7 +249,7 @@ def get_detected_languages(songs: List[Dict[str, str]]) -> Set[str]:
     Returns:
         Set of detected language codes
     """
-    detected_languages: Set[str] = set()
+    detected_languages: set[str] = set()
     
     for song in songs:
         played_at = song.get('playedAt')

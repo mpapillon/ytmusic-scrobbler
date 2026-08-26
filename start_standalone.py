@@ -7,27 +7,39 @@ Standalone YouTube Music Last.fm Scrobbler
 - Better position tracking and re-reproduction detection
 - Robust error handling and categorization
 """
-import os
-import sys
-import time
-import lastpy
-import sqlite3
 import argparse
-import webbrowser
-import threading
 import http.server
+import os
 import socketserver
+import sqlite3
+import sys
+import threading
+import time
+import webbrowser
 import xml.etree.ElementTree as ET
+from typing import final, override
+
 from dotenv import find_dotenv, load_dotenv, set_key
-from typing import List, Dict, Optional
+
+import lastpy
+from date_detection import (
+    get_detected_languages,
+    get_unknown_date_values,
+    is_today_song,
+)
+from scrobble_utils import (
+    FailureType,
+    PositionTracker,
+    SmartScrobbler,
+    compute_scrobble_window,
+    log_error,
+    log_info,
+    log_warning,
+    start_of_day,
+)
 
 # Import our new modules
 from ytmusic_fetcher import get_ytmusic_history_from_cookie
-from date_detection import is_today_song, get_unknown_date_values, get_detected_languages
-from scrobble_utils import (
-    SmartScrobbler, PositionTracker, FailureType, compute_scrobble_window, start_of_day,
-    log_info, log_warning, log_error,
-)
 
 # sysexits.h-inspired exit codes so a cron wrapper can react differently per
 # failure category without parsing message text (see plan/discussion): AUTH
@@ -54,6 +66,7 @@ class TokenHandler(http.server.SimpleHTTPRequestHandler):
             b'<body><p>Authentication successful! You can now close this window.</p></body></html>')
         self.server.token = self.path.split('?token=')[1]
 
+    @override
     def do_GET(self):
         if self.path.startswith('/?token='):
             self.do_get_token()
@@ -62,9 +75,10 @@ class TokenHandler(http.server.SimpleHTTPRequestHandler):
 
 
 class TokenServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
-    token = None
+    token: str | None = None
 
 
+@final
 class ImprovedProcess:
     def __init__(self, dry_run: bool = False):
         self.dry_run = dry_run
@@ -117,7 +131,7 @@ class ImprovedProcess:
         self.conn.commit()
         cursor.close()
 
-    def get_token(self):
+    def get_token(self) -> str:
         log_info("Waiting for Last.fm authentication...")
         auth_url = f"https://www.last.fm/api/auth/?api_key={self.api_key}&cb=http://localhost:5588"
 
@@ -133,7 +147,7 @@ class ImprovedProcess:
                 time.sleep(0.1)
         return token
 
-    def get_session(self, token):
+    def get_session(self, token: str):
         log_info("Getting Last.fm session...")
         xml_response = lastpy.authorize(token)
         try:
@@ -183,7 +197,7 @@ class ImprovedProcess:
         print("2. Copy the new cookie from Developer Tools", file=sys.stderr)
         print("3. Run this script again", file=sys.stderr)
 
-    def execute(self) -> Optional[FailureType]:
+    def execute(self) -> FailureType | None:
         """Run the full fetch/filter/scrobble flow. Returns None on success, or the
         FailureType that ended the run early."""
         # Get YouTube Music cookie (raises ValueError if unavailable - a config

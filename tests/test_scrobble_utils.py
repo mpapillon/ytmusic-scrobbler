@@ -5,15 +5,26 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scrobble_utils import PositionTracker, ScrobbleTimestampCalculator, compute_scrobble_window
+from scrobble_utils import (
+    DatabaseSong,
+    PositionTracker,
+    ScrobbleTimestampCalculator,
+    compute_scrobble_window,
+)
 
 SONG_A = {'title': 'Song A', 'artist': 'Artist A', 'album': 'Album A'}
 SONG_B = {'title': 'Song B', 'artist': 'Artist B', 'album': 'Album B'}
 SONG_C = {'title': 'Song C', 'artist': 'Artist C', 'album': 'Album C'}
 
 
-def db_entry(song, array_position):
-    return {**song, 'array_position': array_position, 'max_array_position': array_position}
+def db_entry(song: dict[str, str], array_position: int) -> DatabaseSong:
+    return {
+        'title': song['title'],
+        'artist': song['artist'],
+        'album': song['album'],
+        'array_position': array_position,
+        'max_array_position': array_position,
+    }
 
 
 class TestDetectSongsToScrobbleCalibration(unittest.TestCase):
@@ -48,7 +59,7 @@ class TestDetectSongsToScrobbleNominal(unittest.TestCase):
 
         self.assertEqual(result[0]['reason'], 'reproduction')
         self.assertTrue(result[0]['should_scrobble'])
-        self.assertEqual(result[0]['previous_position'], 3)
+        self.assertEqual(result[0].get('previous_position'), 3)
 
     def test_song_same_or_worse_position_is_not_scrobbled(self):
         # SONG_B was at position 1, still at position 1 - no new play

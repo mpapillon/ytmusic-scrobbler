@@ -16,8 +16,8 @@ os.environ.setdefault('LAST_FM_API_SECRET', 'dummy')
 os.environ.setdefault('YTMUSIC_COOKIE', 'dummy')
 os.environ.setdefault('LASTFM_SESSION', 'dummy')
 
-import start_standalone
 import scrobble_utils
+import start_standalone
 
 SONG_1 = {'title': 'Song1', 'artist': 'Art1', 'album': 'Alb1', 'playedAt': 'Today'}
 SONG_2 = {'title': 'Song2', 'artist': 'Art2', 'album': 'Alb2', 'playedAt': 'Today'}
