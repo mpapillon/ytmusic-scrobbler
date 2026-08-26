@@ -8,16 +8,13 @@ Standalone YouTube Music Last.fm Scrobbler
 - Robust error handling and categorization
 """
 import argparse
-import http.server
 import os
-import socketserver
 import sqlite3
 import sys
-import threading
 import time
 import webbrowser
 import xml.etree.ElementTree as ET
-from typing import final, override
+from typing import final
 
 from dotenv import find_dotenv, load_dotenv, set_key
 
@@ -54,28 +51,6 @@ EXIT_CODES = {
 }
 
 load_dotenv(find_dotenv(usecwd=True))
-
-
-class TokenHandler(http.server.SimpleHTTPRequestHandler):
-    def do_get_token(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
-        self.wfile.write(b'<html><head><title>Token Received</title></head>')
-        self.wfile.write(
-            b'<body><p>Authentication successful! You can now close this window.</p></body></html>')
-        self.server.token = self.path.split('?token=')[1]
-
-    @override
-    def do_GET(self):
-        if self.path.startswith('/?token='):
-            self.do_get_token()
-        else:
-            http.server.SimpleHTTPRequestHandler.do_GET(self)
-
-
-class TokenServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
-    token: str | None = None
 
 
 @final
@@ -132,32 +107,41 @@ class ImprovedProcess:
         cursor.close()
 
     def get_token(self) -> str:
-        log_info("Waiting for Last.fm authentication...")
-        auth_url = f"https://www.last.fm/api/auth/?api_key={self.api_key}&cb=http://localhost:5588"
+        auth_token = lastpy.get_token()
+        auth_url = f"https://www.last.fm/api/auth/?api_key={self.api_key}&token={auth_token}"
 
-        with TokenServer(('localhost', 5588), TokenHandler) as httpd:
-            webbrowser.open(auth_url)
-            thread = threading.Thread(target=httpd.serve_forever)
-            thread.start()
-            while True:
-                if httpd.token:
-                    token = httpd.token
-                    httpd.shutdown()
-                    break
-                time.sleep(0.1)
-        return token
+        poll_interval_seconds = 5
+        timeout_minutes = 5
+        max_attempts = timeout_minutes * 60 // poll_interval_seconds
 
-    def get_session(self, token: str):
-        log_info("Getting Last.fm session...")
-        xml_response = lastpy.authorize(token)
-        try:
+        webbrowser.open(auth_url)
+        print(
+            "\nLast.fm authorization required. Open this URL and approve access:\n"
+            f"\n    {auth_url}\n\n"
+            f"Waiting up to {timeout_minutes} minutes for approval...\n"
+        )
+
+        for _ in range(max_attempts):
+            xml_response = lastpy.get_session(auth_token)
             root = ET.fromstring(xml_response)
-            session_key = root.find('session/key').text
-            set_key('.env', 'LASTFM_SESSION', session_key)
-            return session_key
-        except Exception as e:
-            log_error(f"Getting Last.fm session: {xml_response}")
-            raise Exception(e)
+            if (session_key := root.find('session/key')) is not None and session_key.text:
+                set_key('.env', 'LASTFM_SESSION', session_key.text)
+                log_info("Last.fm authorization successful.")
+                return session_key.text
+
+            error = root.find("error")
+            if error is not None and error.attrib.get("code") == "14":
+                # 14 : This token has not been authorized
+                time.sleep(poll_interval_seconds)
+                continue
+
+            message = error.text.strip() if error is not None and error.text else xml_response
+            raise Exception(f"Last.fm rejected the authorization token: {message}")
+
+        raise Exception(
+            f"Timed out after {timeout_minutes} minutes waiting for Last.fm authorization. "
+            f"Open {auth_url} and approve access, then rerun the script."
+        )
 
     def get_cookie_from_env_or_input(self) -> str:
         """Get YouTube Music cookie from environment or user input"""
@@ -212,11 +196,9 @@ class ImprovedProcess:
         ).fetchone()
         last_success_at = last_success_row[0] if last_success_row else None
 
-        # Get Last.fm session if not available (not needed in dry-run mode)
-        if not self.session and not self.dry_run:
+        if not self.session:
             try:
-                token = self.get_token()
-                self.session = self.get_session(token)
+                self.session = self.get_token()
             except Exception as e:
                 failure_type = self.scrobbler.categorize_error(e)
                 log_error(f"Failed to authenticate with Last.fm: {e} ({failure_type.value})")

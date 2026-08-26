@@ -3,6 +3,7 @@
 import hashlib
 import os
 import time
+import xml.etree.ElementTree as ET
 
 import requests
 from dotenv import find_dotenv, load_dotenv
@@ -13,7 +14,7 @@ api_head = 'http://ws.audioscrobbler.com/2.0/'
 secret = os.environ['LAST_FM_API_SECRET']
 
 
-def authorize(user_token: str) -> str:
+def get_session(user_token: str) -> str:
     params = {
         'api_key': os.environ['LAST_FM_API'],
         'method': 'auth.getSession',
@@ -23,6 +24,22 @@ def authorize(user_token: str) -> str:
     params['api_sig'] = requestHash
     apiResp = requests.post(api_head, params)
     return apiResp.text
+
+
+def get_token() -> str:
+    params = {
+        'api_key': os.environ['LAST_FM_API'],
+        'method': 'auth.getToken',
+    }
+    requestHash = hashRequest(params, secret)
+    params['api_sig'] = requestHash
+    apiResp = requests.post(api_head, params)
+    root = ET.fromstring(apiResp.text)
+    if (token := root.find("token")) is not None and token.text:
+        return token.text
+    error = root.find("error")
+    message = error.text.strip() if error is not None and error.text else apiResp.text
+    raise Exception(f"Last.fm auth.getToken failed: {message}")
 
 
 def nowPlaying(song_name: str, artist_name: str, session_key: str) -> str:
