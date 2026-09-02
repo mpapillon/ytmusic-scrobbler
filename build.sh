@@ -15,8 +15,15 @@ cp start_standalone.py scrobble_utils.py date_detection.py ytmusic_fetcher.py "$
 cp -r lastpy "$BUILD_DIR/"
 find "$BUILD_DIR" -name '__pycache__' -type d -exec rm -rf {} +
 
+echo "Creating __main__.py..."
+cat > "$BUILD_DIR/__main__.py" << 'EOF'
+import sys
+from start_standalone import main
+sys.exit(main())
+EOF
+
 echo "Building $OUTPUT..."
-python3 -m zipapp "$BUILD_DIR" -m "start_standalone:main" -o "$OUTPUT" -p "/usr/bin/env python3"
+python3 -m zipapp "$BUILD_DIR" -o "$OUTPUT" -p "/usr/bin/env python3"
 chmod +x "$OUTPUT"
 
 echo "Done: $OUTPUT"
