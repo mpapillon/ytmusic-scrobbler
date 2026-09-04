@@ -8,6 +8,7 @@ Standalone YouTube Music Last.fm Scrobbler
 - Robust error handling and categorization
 """
 import argparse
+from datetime import datetime, timezone
 import os
 import sys
 import time
@@ -43,8 +44,9 @@ load_dotenv(find_dotenv(usecwd=True))
 
 @final
 class ImprovedProcess:
-    def __init__(self, store: Store, cookie: str, dry_run: bool = False):
+    def __init__(self, store: Store, cookie: str, to_datetime: datetime, dry_run: bool = False):
         self.cookie = cookie
+        self.to_datetime = to_datetime
         self.dry_run = dry_run
         self.api_key = os.environ.get('LAST_FM_API')
         self.api_secret = os.environ.get('LAST_FM_API_SECRET')
@@ -190,7 +192,7 @@ class ImprovedProcess:
                     with self.store.transaction():
                         self.store.delete_scrobbles(scrobbles_to_delete)
 
-        now = int(time.time())
+        now = int(self.to_datetime.timestamp())
         is_first_time = last_success_at is None or last_success_at < start_of_day(now)
 
         songs_to_process = self.position_tracker.detect_songs_to_scrobble(
@@ -328,13 +330,28 @@ def main():
         '-c', '--set-cookie',
         help="Save the specified cookie for authentication"
     )
+    parser.add_argument(
+        '--to-datetime',
+        help="Scrobble to the specified datetime (ISO 8601 format)"
+    )
     args = parser.parse_args()
+
+    to_datetime = datetime.now()
+    if args.to_datetime:
+        parsed = datetime.fromisoformat(args.to_datetime)
+        if parsed.tzinfo is not None:
+            parsed = parsed.replace(tzinfo=None)
+        if parsed > to_datetime:
+            log_error("to_datetime must be in the past")
+            return 78
+        to_datetime = parsed
+        log_info(f"Scrobbling to time: {to_datetime}")
 
     try:
         cookie = get_cookie(args.set_cookie)
         store = Store()
         store.migrate()
-        process = ImprovedProcess(store, cookie, dry_run=args.dry_run)
+        process = ImprovedProcess(store, cookie, to_datetime, dry_run=args.dry_run)
         failure = process.execute()
         if failure is None:
             return 0

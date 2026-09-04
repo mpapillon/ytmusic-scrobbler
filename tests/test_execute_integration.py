@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
+from datetime import datetime
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -59,7 +60,12 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
     def new_process(self, dry_run=False):
         store = Store()
         store.migrate()
-        return start_standalone.ImprovedProcess(store, "fake cookie", dry_run=dry_run)
+        return start_standalone.ImprovedProcess(
+            store,
+            "fake cookie",
+            to_datetime=datetime.now(),
+            dry_run=dry_run
+        )
 
     def test_initial_run_is_calibration_only(self):
         self.history[:] = [SONG_1, SONG_2]
