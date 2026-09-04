@@ -12,7 +12,7 @@ from errors import LastFmError
 
 load_dotenv(find_dotenv(usecwd=True))
 
-api_head = 'http://ws.audioscrobbler.com/2.0/'
+api_head = 'https://ws.audioscrobbler.com/2.0/'
 secret = os.environ['LAST_FM_API_SECRET']
 
 
@@ -36,7 +36,7 @@ def get_session(user_token: str) -> str:
     }
     requestHash = hashRequest(params, secret)
     params['api_sig'] = requestHash
-    apiResp = requests.post(api_head, params)
+    apiResp = requests.post(api_head, params, timeout=30)
     _raise_if_error(apiResp.text, "auth.getSession")
     return apiResp.text
 
@@ -48,7 +48,7 @@ def get_token() -> str:
     }
     requestHash = hashRequest(params, secret)
     params['api_sig'] = requestHash
-    apiResp = requests.post(api_head, params)
+    apiResp = requests.post(api_head, params, timeout=30)
     root = ET.fromstring(apiResp.text)
     if (token := root.find("token")) is not None and token.text:
         return token.text
@@ -67,7 +67,7 @@ def nowPlaying(song_name: str, artist_name: str, session_key: str) -> str:
     }
     requestHash = hashRequest(params, secret)
     params['api_sig'] = requestHash
-    apiResp = requests.post(api_head, params)
+    apiResp = requests.post(api_head, params, timeout=30)
     return apiResp.text
 
 
@@ -84,7 +84,7 @@ def scrobble(song_name: str, artist_name: str, album_name: str, session_key: str
     }
     requestHash = hashRequest(params, secret)
     params['api_sig'] = requestHash
-    apiResp = requests.post(api_head, params)
+    apiResp = requests.post(api_head, params, timeout=30)
     _raise_if_error(apiResp.text, "track.scrobble")
     return apiResp.text
 
