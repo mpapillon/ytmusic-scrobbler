@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import final
 
@@ -18,6 +19,11 @@ class Scrobble:
 class Store:
     def __init__(self):
         self.conn = sqlite3.connect('./data.db')
+
+    @contextmanager
+    def transaction(self):
+        with self.conn:
+            yield self
 
     def migrate(self):
         cursor = self.conn.cursor()
@@ -65,7 +71,6 @@ class Store:
         cursor = self.conn.cursor()
         try:
             cursor.execute('UPDATE run_state SET last_success_at = ? WHERE id = 1', (timestamp,))
-            self.conn.commit()
         finally:
             cursor.close()
 
@@ -101,7 +106,6 @@ class Store:
                 INSERT INTO scrobbles (track_name, artist_name, album_name, array_position, max_array_position)
                 VALUES (?, ?, ?, ?, ?)
             ''', (track_name, artist_name, album_name, array_position, max_array_position))
-            self.conn.commit()
             return cursor.lastrowid
         finally:
             cursor.close()
@@ -114,7 +118,6 @@ class Store:
                 SET array_position = ?, max_array_position = ?, scrobbled_at = CURRENT_TIMESTAMP
                 WHERE id = ?
             ''', (array_position, max_array_position, id))
-            self.conn.commit()
         finally:
             cursor.close()
 
@@ -124,6 +127,5 @@ class Store:
         cursor = self.conn.cursor()
         try:
             cursor.execute('DELETE FROM scrobbles WHERE id IN ({})'.format(','.join('?' for _ in ids)), ids)
-            self.conn.commit()
         finally:
             cursor.close()

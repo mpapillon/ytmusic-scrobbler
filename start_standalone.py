@@ -187,7 +187,8 @@ class ImprovedProcess:
                     log_info(f"[DRY RUN] Would remove {len(scrobbles_to_delete)} songs no longer in today's history")
                 else:
                     log_info(f"Removing {len(scrobbles_to_delete)} songs no longer in today's history")
-                    self.store.delete_scrobbles(scrobbles_to_delete)
+                    with self.store.transaction():
+                        self.store.delete_scrobbles(scrobbles_to_delete)
 
         now = int(time.time())
         is_first_time = last_success_at is None or last_success_at < start_of_day(now)
@@ -224,23 +225,36 @@ class ImprovedProcess:
             reason = item['reason']
 
             try:
-                if should_scrobble:
-                    # Calculate smart timestamp
-                    timestamp = self.scrobbler.calculate_timestamp(
-                        scrobble_position,
-                        total_to_scrobble,
-                        window_start,
-                        window_end
-                    )
-
-                    action = "NEW" if reason == "new_song" else "RE-SCROBBLE"
-
-                    if self.dry_run:
+                if self.dry_run:
+                    if should_scrobble:
+                        action = "NEW" if reason == "new_song" else "RE-SCROBBLE"
                         songs_scrobbled += 1
                         log_info(f"[DRY RUN] Would scrobble ({action}): \"{song['title']}\" by {song['artist']}")
                         scrobble_position += 1
+                    continue
+
+                with self.store.transaction():
+                    existing_scrobble = self.store.find_scrobble(
+                        song['title'], song['artist'], song['album']
+                    )
+
+                    if existing_scrobble:
+                        new_max = max(existing_scrobble.max_array_position or position, position)
+                        self.store.update_scrobble_position(existing_scrobble.id, position, new_max)
                     else:
-                        # Scrobble the song
+                        self.store.insert_scrobble(
+                            song['title'], song['artist'], song['album'], position, position
+                        )
+
+                    if should_scrobble:
+                        timestamp = self.scrobbler.calculate_timestamp(
+                            scrobble_position,
+                            total_to_scrobble,
+                            window_start,
+                            window_end
+                        )
+                        action = "NEW" if reason == "new_song" else "RE-SCROBBLE"
+
                         success = self.scrobbler.scrobble_song(song, self.session, timestamp)
 
                         if success:
@@ -250,19 +264,6 @@ class ImprovedProcess:
                         else:
                             log_info(f"FAILED: \"{song['title']}\" by {song['artist']} (Last.fm rejected)")
 
-                if self.dry_run:
-                    # Skip database writes so a dry run has no side effects
-                    continue
-
-                # Update/insert in database
-                existing_scrobble = self.store.find_scrobble(song['title'], song['artist'], song['album'])
-
-                if existing_scrobble:
-                    # Update existing song
-                    new_max = max(existing_scrobble.max_array_position or position, position)
-                    self.store.update_scrobble_position(existing_scrobble.id, position, new_max)
-                else:
-                    self.store.insert_scrobble(song['title'], song['artist'], song['album'], position, position)
             except Exception as error:
                 failure_type = self.scrobbler.categorize_error(error)
                 log_error(f'Failed to process "{song["title"]}" by {song["artist"]}: {error} ({failure_type.value})')
@@ -272,11 +273,9 @@ class ImprovedProcess:
                     had_fatal_error = True
                     break
 
-        # Only mark this as a successful run if it wasn't cut short by a fatal
-        # error - otherwise the next run's window would wrongly start from "now"
-        # instead of correctly spanning the gap this run failed to cover.
         if not self.dry_run and not had_fatal_error:
-            self.store.update_last_success_at(now)
+            with self.store.transaction():
+                self.store.update_last_success_at(now)
 
         print()
         if self.dry_run:

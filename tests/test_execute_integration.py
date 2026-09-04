@@ -3,6 +3,7 @@ Integration tests for ImprovedProcess.execute(): the full flow through a temp SQ
 DB, with network calls (YouTube Music history fetch, Last.fm scrobble) mocked out.
 """
 import os
+import sqlite3
 import sys
 import tempfile
 import time
@@ -184,6 +185,51 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
         # midnight fallback would place it several hours earlier than that instead.
         self.assertEqual(min(timestamps), two_hours_ago)
         self.assertGreater(max(timestamps), min(timestamps))
+
+    def test_readonly_db_skips_scrobble_instead_of_scrobbling_unrecorded(self):
+        """Regression test: if the DB can't be written (read-only), a new song
+        must NOT be scrobbled - otherwise the next run would re-scrobble it as a
+        duplicate (the original bug: update happened after the scrobble)."""
+        self.history[:] = [SONG_1]
+        process = self.new_process()
+        process.execute()  # calibration
+
+        process.store.conn.execute("PRAGMA query_only=ON")
+
+        self.history[:] = [SONG_1, SONG_3]
+        self.scrobbled.clear()
+        # The final run_state update fails on the read-only DB and propagates.
+        with self.assertRaises(sqlite3.OperationalError):
+            process.execute()
+
+        self.assertEqual(self.scrobbled, [])
+
+    def test_rollback_undoes_db_write_when_scrobble_raises(self):
+        """A scrobble that raises must roll back the song's position write, so the
+        song is retried as new on the next run instead of being silently lost."""
+        self.history[:] = [SONG_1]
+        process = self.new_process()
+        process.execute()  # calibration
+
+        self.scrobbled.clear()
+        with patch.object(
+            scrobble_utils.SmartScrobbler, 'scrobble_song',
+            side_effect=RuntimeError('network down'),
+        ):
+            self.history[:] = [SONG_1, SONG_3]
+            process.execute()
+
+        # Song3's insert was rolled back; only the pre-existing Song1 remains.
+        rows = process.store.conn.execute('SELECT track_name FROM scrobbles').fetchall()
+        self.assertEqual([r[0] for r in rows], ['Song1'])
+        self.assertEqual(self.scrobbled, [])
+
+        # Next run with a working scrobble retries Song3 as a new song.
+        self.history[:] = [SONG_1, SONG_3]
+        process.execute()
+        self.assertEqual([title for title, _ in self.scrobbled], ['Song3'])
+        rows = process.store.conn.execute('SELECT track_name FROM scrobbles').fetchall()
+        self.assertEqual(sorted(r[0] for r in rows), ['Song1', 'Song3'])
 
     def test_dry_run_never_writes_to_the_database(self):
         self.history[:] = [SONG_1, SONG_2]
