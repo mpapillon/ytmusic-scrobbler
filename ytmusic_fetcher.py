@@ -10,6 +10,8 @@ import time
 
 import requests
 
+from errors import YouTubeAuthError, YouTubeFetchError
+
 
 class YTMusicFetcher:
     def __init__(self, cookie: str):
@@ -134,9 +136,14 @@ class YTMusicFetcher:
 
         if not response.ok:
             if response.status_code == 401:
-                raise Exception("401 UNAUTHENTICATED: Request is missing required authentication credential. Your YouTube Music credentials have expired.")
+                raise YouTubeAuthError(
+                    "401 UNAUTHENTICATED: Request is missing required authentication credential. "
+                    "Your YouTube Music credentials have expired."
+                )
             else:
-                raise Exception(f"Failed to fetch YouTube Music history page: {response.status_code} {response.reason_phrase}\n{response.text}")
+                raise YouTubeFetchError(
+                    f"Failed to fetch YouTube Music history page: {response.status_code} {response.reason_phrase}\n{response.text}"
+                )
 
         return response.text
 
@@ -218,7 +225,10 @@ class YTMusicFetcher:
 
                 # Check if it contains signin data
                 if "guideSigninPromoRenderer" in json_str:
-                    raise Exception("401 UNAUTHENTICATED: Request is missing required authentication credential. Your YouTube Music credentials have expired.")
+                    raise YouTubeAuthError(
+                        "401 UNAUTHENTICATED: Request is missing required authentication credential. "
+                        "Your YouTube Music credentials have expired."
+                    )
 
                 # Check if it contains history data
                 if any(keyword in json_str for keyword in [
@@ -293,10 +303,10 @@ class YTMusicFetcher:
         try:
             results = data.get("contents", {}).get("singleColumnBrowseResultsRenderer", {}).get("tabs", [{}])[0].get("tabRenderer", {}).get("content", {}).get("sectionListRenderer", {}).get("contents", [])
         except (KeyError, IndexError, TypeError):
-            raise Exception("No results found in response data")
+            raise YouTubeFetchError("No results found in response data")
 
         if not results:
-            raise Exception("No results found")
+            raise YouTubeFetchError("No results found")
 
         songs = []
 
@@ -382,7 +392,9 @@ class YTMusicFetcher:
         initial_data = self._extract_initial_data_from_page(html)
 
         if not initial_data:
-            raise Exception("No initial data found in page - this might indicate authentication issues")
+            raise YouTubeAuthError(
+                "No initial data found in page - this might indicate authentication issues"
+            )
 
         return self._parse_ytmusic_response(initial_data)
 

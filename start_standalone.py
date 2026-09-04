@@ -24,8 +24,8 @@ from date_detection import (
     get_unknown_date_values,
     is_today_song,
 )
+from errors import ConfigError, FailureType, LastFmError
 from scrobble_utils import (
-    FailureType,
     PositionTracker,
     SmartScrobbler,
     compute_scrobble_window,
@@ -38,18 +38,6 @@ from scrobble_utils import (
 # Import our new modules
 from ytmusic_fetcher import get_ytmusic_history_from_cookie
 
-# sysexits.h-inspired exit codes so a cron wrapper can react differently per
-# failure category without parsing message text (see plan/discussion): AUTH
-# needs a human (renew cookie/session), NETWORK/TEMPORARY/LASTFM are worth
-# retrying on the next scheduled run, UNKNOWN means investigate the code.
-EXIT_CODES = {
-    FailureType.AUTH: 77,        # EX_NOPERM
-    FailureType.NETWORK: 75,     # EX_TEMPFAIL
-    FailureType.TEMPORARY: 75,   # EX_TEMPFAIL
-    FailureType.LASTFM: 75,      # EX_TEMPFAIL
-    FailureType.UNKNOWN: 70,     # EX_SOFTWARE
-}
-
 load_dotenv(find_dotenv(usecwd=True))
 
 
@@ -61,7 +49,7 @@ class ImprovedProcess:
         self.api_key = os.environ.get('LAST_FM_API')
         self.api_secret = os.environ.get('LAST_FM_API_SECRET')
         if not self.api_key or not self.api_secret:
-            raise ValueError("Missing LAST_FM_API or LAST_FM_API_SECRET environment variables")
+            raise ConfigError("Missing LAST_FM_API or LAST_FM_API_SECRET environment variables")
 
         try:
             self.session = os.environ['LASTFM_SESSION']
@@ -137,9 +125,9 @@ class ImprovedProcess:
                 continue
 
             message = error.text.strip() if error is not None and error.text else xml_response
-            raise Exception(f"Last.fm rejected the authorization token: {message}")
+            raise LastFmError(f"Last.fm rejected the authorization token: {message}")
 
-        raise Exception(
+        raise LastFmError(
             f"Timed out after {timeout_minutes} minutes waiting for Last.fm authorization. "
             f"Open {auth_url} and approve access, then rerun the script."
         )
@@ -404,7 +392,7 @@ def get_cookie(args_cookie: str | None) -> str:
         print("5. Find any request to music.youtube.com", file=sys.stderr)
         print("6. Copy the entire 'Cookie' header value", file=sys.stderr)
         print("The cookie should contain '__Secure-3PAPISID=' among other values.", file=sys.stderr)
-        raise ValueError("YouTube Music cookie is required")
+        raise ConfigError("YouTube Music cookie is required")
 
     if args_cookie and args_cookie != env_cookie:
         set_key('.env', 'YTMUSIC_COOKIE', cookie)
@@ -432,9 +420,9 @@ def main():
         failure = process.execute()
         if failure is None:
             return 0
-        return EXIT_CODES.get(failure, 70)
+        return failure.exit_code
 
-    except ValueError as e:
+    except ConfigError as e:
         log_error(str(e))
         return 78
     except KeyboardInterrupt:

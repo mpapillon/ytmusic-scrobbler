@@ -7,10 +7,10 @@ import math
 import sys
 import xml.etree.ElementTree as ET
 from datetime import datetime
-from enum import Enum
 from typing import Literal, NotRequired, TypedDict, final
 
 import lastpy
+from errors import FailureType, ScrobblerError
 
 
 def log_info(message: str) -> None:
@@ -23,14 +23,6 @@ def log_warning(message: str) -> None:
 
 def log_error(message: str) -> None:
     print(f"Error: {message}", file=sys.stderr)
-
-
-class FailureType(Enum):
-    AUTH = "AUTH"
-    NETWORK = "NETWORK"
-    TEMPORARY = "TEMPORARY"  # For 503, rate limits, and other temporary issues
-    LASTFM = "LASTFM"
-    UNKNOWN = "UNKNOWN"
 
 class DatabaseSong(TypedDict):
     title: str
@@ -108,7 +100,15 @@ class ErrorCategorizer:
 
     @staticmethod
     def categorize_error(error: Exception) -> FailureType:
-        """Categorize error type based on error message"""
+        """Categorize error type.
+
+        Typed `ScrobblerError` subclasses hold their category directly. Anything
+        else (requests, xml parsing, etc.) is guessed from the message string as
+        a fallback.
+        """
+        if isinstance(error, ScrobblerError):
+            return error.failure_type
+
         error_message = str(error)
 
         # Authentication errors
@@ -140,19 +140,6 @@ class ErrorCategorizer:
             return FailureType.LASTFM
 
         return FailureType.UNKNOWN
-
-    @staticmethod
-    def should_deactivate_user(failure_type: FailureType, consecutive_failures: int) -> bool:
-        """Determine if user should be deactivated based on failure type and count"""
-        thresholds = {
-            FailureType.AUTH: 3,      # Auth issues are persistent
-            FailureType.NETWORK: 8,   # Network issues might be temporary
-            FailureType.TEMPORARY: 15, # Temporary issues should rarely deactivate users
-            FailureType.LASTFM: 5,    # Last.fm issues might be temporary
-            FailureType.UNKNOWN: 7,   # Give more chances for unknown errors
-        }
-
-        return consecutive_failures >= thresholds.get(failure_type, 7)
 
 
 @final
@@ -284,10 +271,6 @@ class SmartScrobbler:
     def categorize_error(self, error: Exception) -> FailureType:
         """Categorize an error for smart handling"""
         return self.error_categorizer.categorize_error(error)
-
-    def should_deactivate_user(self, failure_type: FailureType, consecutive_failures: int) -> bool:
-        """Check if user should be deactivated"""
-        return self.error_categorizer.should_deactivate_user(failure_type, consecutive_failures)
 
 
 class PositionTracker:

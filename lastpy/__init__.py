@@ -8,10 +8,24 @@ import xml.etree.ElementTree as ET
 import requests
 from dotenv import find_dotenv, load_dotenv
 
+from errors import LastFmError
+
 load_dotenv(find_dotenv(usecwd=True))
 
 api_head = 'http://ws.audioscrobbler.com/2.0/'
 secret = os.environ['LAST_FM_API_SECRET']
+
+
+def _raise_if_error(api_response: str, context: str) -> None:
+    """Raise LastFmError if the Last.fm XML response contains an <error> tag."""
+    try:
+        root = ET.fromstring(api_response)
+    except ET.ParseError:
+        return
+    error = root.find("error")
+    if error is not None:
+        message = error.text.strip() if error.text else api_response
+        raise LastFmError(f"Last.fm {context} failed: {message}")
 
 
 def get_session(user_token: str) -> str:
@@ -23,6 +37,7 @@ def get_session(user_token: str) -> str:
     requestHash = hashRequest(params, secret)
     params['api_sig'] = requestHash
     apiResp = requests.post(api_head, params)
+    _raise_if_error(apiResp.text, "auth.getSession")
     return apiResp.text
 
 
@@ -37,9 +52,9 @@ def get_token() -> str:
     root = ET.fromstring(apiResp.text)
     if (token := root.find("token")) is not None and token.text:
         return token.text
-    error = root.find("error")
-    message = error.text.strip() if error is not None and error.text else apiResp.text
-    raise Exception(f"Last.fm auth.getToken failed: {message}")
+    _raise_if_error(apiResp.text, "auth.getToken")
+    # Neither a token nor an <error> tag: unexpected response
+    raise LastFmError(f"Last.fm auth.getToken returned an unexpected response: {apiResp.text}")
 
 
 def nowPlaying(song_name: str, artist_name: str, session_key: str) -> str:
@@ -70,6 +85,7 @@ def scrobble(song_name: str, artist_name: str, album_name: str, session_key: str
     requestHash = hashRequest(params, secret)
     params['api_sig'] = requestHash
     apiResp = requests.post(api_head, params)
+    _raise_if_error(apiResp.text, "track.scrobble")
     return apiResp.text
 
 
