@@ -18,6 +18,7 @@ os.environ.setdefault('LASTFM_SESSION', 'dummy')
 
 import scrobble_utils
 import start_standalone
+from store import Store
 
 SONG_1 = {'title': 'Song1', 'artist': 'Art1', 'album': 'Alb1', 'playedAt': 'Today'}
 SONG_2 = {'title': 'Song2', 'artist': 'Art2', 'album': 'Alb2', 'playedAt': 'Today'}
@@ -55,7 +56,9 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
         self.addCleanup(self.tmpdir.cleanup)
 
     def new_process(self, dry_run=False):
-        return start_standalone.ImprovedProcess("fake cookie", dry_run=dry_run)
+        store = Store()
+        store.migrate()
+        return start_standalone.ImprovedProcess(store, "fake cookie", dry_run=dry_run)
 
     def test_initial_run_is_calibration_only(self):
         self.history[:] = [SONG_1, SONG_2]
@@ -64,9 +67,9 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
         process.execute()
 
         self.assertEqual(self.scrobbled, [])
-        rows = process.conn.execute('SELECT track_name, array_position FROM scrobbles').fetchall()
+        rows = process.store.conn.execute('SELECT track_name, array_position FROM scrobbles').fetchall()
         self.assertEqual(sorted(rows), [('Song1', 1), ('Song2', 2)])
-        last_success_at = process.conn.execute('SELECT last_success_at FROM run_state').fetchone()[0]
+        last_success_at = process.store.conn.execute('SELECT last_success_at FROM run_state').fetchone()[0]
         self.assertIsNotNone(last_success_at)
 
     def test_nominal_run_scrobbles_new_song_only(self):
@@ -101,7 +104,7 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
         # Song2 drops out of today's history (e.g. transient scraping gap)
         self.history[:] = [SONG_1]
         process.execute()
-        rows = process.conn.execute('SELECT track_name FROM scrobbles').fetchall()
+        rows = process.store.conn.execute('SELECT track_name FROM scrobbles').fetchall()
         self.assertEqual([r[0] for r in rows], ['Song1'])
 
         # Song2 is played again today
@@ -120,8 +123,8 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
         process = self.new_process()
         process.execute()  # calibration on "day 1"
 
-        process.conn.execute("UPDATE run_state SET last_success_at = strftime('%s','now','-3 days')")
-        process.conn.commit()
+        process.store.conn.execute("UPDATE run_state SET last_success_at = strftime('%s','now','-3 days')")
+        process.store.conn.commit()
 
         # "Today" is now a different day - a completely different set of songs,
         # none of which match the stale rows from before the gap.
@@ -129,7 +132,7 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
         process.execute()
 
         self.assertEqual(self.scrobbled, [])
-        rows = process.conn.execute('SELECT track_name FROM scrobbles').fetchall()
+        rows = process.store.conn.execute('SELECT track_name FROM scrobbles').fetchall()
         self.assertEqual([r[0] for r in rows], ['Song3'])
 
     def test_same_day_gap_with_wiped_db_still_scrobbles_normally(self):
@@ -164,8 +167,8 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
         process.execute()  # calibration on "day 1"
 
         two_hours_ago = int(time.time()) - 2 * 3600
-        process.conn.execute('UPDATE run_state SET last_success_at = ?', (two_hours_ago,))
-        process.conn.commit()
+        process.store.conn.execute('UPDATE run_state SET last_success_at = ?', (two_hours_ago,))
+        process.store.conn.commit()
 
         # DB wiped by an intervening empty-today run, same as the reported bug -
         # but last_success_at is still a real, recent, same-day anchor.
@@ -186,11 +189,11 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
         self.history[:] = [SONG_1, SONG_2]
         process = self.new_process(dry_run=True)
 
-        before = process.conn.execute('SELECT * FROM scrobbles').fetchall()
-        before_state = process.conn.execute('SELECT * FROM run_state').fetchall()
+        before = process.store.conn.execute('SELECT * FROM scrobbles').fetchall()
+        before_state = process.store.conn.execute('SELECT * FROM run_state').fetchall()
         process.execute()
-        after = process.conn.execute('SELECT * FROM scrobbles').fetchall()
-        after_state = process.conn.execute('SELECT * FROM run_state').fetchall()
+        after = process.store.conn.execute('SELECT * FROM scrobbles').fetchall()
+        after_state = process.store.conn.execute('SELECT * FROM run_state').fetchall()
 
         self.assertEqual(before, after)
         self.assertEqual(before_state, after_state)

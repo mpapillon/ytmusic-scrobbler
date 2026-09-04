@@ -9,7 +9,6 @@ Standalone YouTube Music Last.fm Scrobbler
 """
 import argparse
 import os
-import sqlite3
 import sys
 import time
 import webbrowser
@@ -34,6 +33,7 @@ from scrobble_utils import (
     log_warning,
     start_of_day,
 )
+from store import Store
 
 # Import our new modules
 from ytmusic_fetcher import get_ytmusic_history_from_cookie
@@ -43,7 +43,7 @@ load_dotenv(find_dotenv(usecwd=True))
 
 @final
 class ImprovedProcess:
-    def __init__(self, cookie: str, dry_run: bool = False):
+    def __init__(self, store: Store, cookie: str, dry_run: bool = False):
         self.cookie = cookie
         self.dry_run = dry_run
         self.api_key = os.environ.get('LAST_FM_API')
@@ -59,41 +59,7 @@ class ImprovedProcess:
         # Initialize smart scrobbler
         self.scrobbler = SmartScrobbler(self.api_key, self.api_secret)
         self.position_tracker = PositionTracker()
-
-        # Database connection with improved schema
-        self.conn = sqlite3.connect('./data.db')
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS scrobbles (
-                id INTEGER PRIMARY KEY,
-                track_name TEXT,
-                artist_name TEXT,
-                album_name TEXT,
-                scrobbled_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                array_position INTEGER,
-                max_array_position INTEGER
-            )
-        ''')
-
-        # Add new columns if they don't exist (for backward compatibility)
-        try:
-            cursor.execute('ALTER TABLE scrobbles ADD COLUMN max_array_position INTEGER')
-        except sqlite3.OperationalError:
-            pass  # Column already exists
-
-        # Single-row table tracking the last successful (non-dry-run) run, used to
-        # bound the fake-timestamp distribution window to the real elapsed gap
-        # since that run instead of a fixed guess.
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS run_state (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                last_success_at INTEGER
-            )
-        ''')
-        cursor.execute('INSERT OR IGNORE INTO run_state (id, last_success_at) VALUES (1, NULL)')
-
-        self.conn.commit()
-        cursor.close()
+        self.store = store
 
     def get_token(self) -> str:
         auth_token = lastpy.get_token()
@@ -146,10 +112,7 @@ class ImprovedProcess:
         if self.dry_run:
             log_info("Dry run mode: no songs will actually be scrobbled to Last.fm.")
 
-        last_success_row = self.conn.execute(
-            'SELECT last_success_at FROM run_state WHERE id = 1'
-        ).fetchone()
-        last_success_at = last_success_row[0] if last_success_row else None
+        last_success_at = self.store.get_last_success_at()
 
         if not self.session:
             try:
@@ -196,67 +159,41 @@ class ImprovedProcess:
 
         print()
 
-        # Get existing songs from database
-        cursor = self.conn.cursor()
-        db_songs = cursor.execute('''
-            SELECT track_name, artist_name, album_name, array_position, max_array_position
-            FROM scrobbles
-        ''').fetchall()
-
-        # Convert to dict format for easier processing
-        database_songs = []
-        for row in db_songs:
-            database_songs.append({
-                'title': row[0],
-                'artist': row[1],
-                'album': row[2],
-                'array_position': row[3],
-                'max_array_position': row[4] or row[3]  # Use array_position if max is NULL
-            })
+        database_scrobbles = self.store.get_scrobbles()
 
         # Clean up database: remove songs not in today's history
-        if database_songs:
-            songs_to_delete = []
-            for db_song in database_songs:
+        if database_scrobbles:
+            scrobbles_to_delete: list[int] = []
+            for db_song in database_scrobbles:
                 found = False
                 for today_song in today_songs:
-                    if (today_song['title'] == db_song['title'] and
-                        today_song['artist'] == db_song['artist'] and
-                        today_song['album'] == db_song['album']):
+                    if (today_song['title'] == db_song.track_name and
+                        today_song['artist'] == db_song.artist_name and
+                        today_song['album'] == db_song.album_name):
                         found = True
                         break
 
                 if not found:
-                    songs_to_delete.append(db_song)
+                    scrobbles_to_delete.append(db_song.id)
 
-            if songs_to_delete:
+            if scrobbles_to_delete:
                 # Drop these from the in-memory list too, not just the DB table -
                 # otherwise a song that legitimately replays later in the day still
                 # matches its stale in-memory entry and gets wrongly treated as
                 # "already known" instead of a new play.
-                deleted_keys = {(s['title'], s['artist'], s['album']) for s in songs_to_delete}
-                database_songs = [
-                    s for s in database_songs
-                    if (s['title'], s['artist'], s['album']) not in deleted_keys
-                ]
+                database_scrobbles = [s for s in database_scrobbles if s.id not in scrobbles_to_delete]
 
                 if self.dry_run:
-                    log_info(f"[DRY RUN] Would remove {len(songs_to_delete)} songs no longer in today's history")
+                    log_info(f"[DRY RUN] Would remove {len(scrobbles_to_delete)} songs no longer in today's history")
                 else:
-                    log_info(f"Removing {len(songs_to_delete)} songs no longer in today's history")
-                    for song in songs_to_delete:
-                        cursor.execute('''
-                            DELETE FROM scrobbles
-                            WHERE track_name = ? AND artist_name = ? AND album_name = ?
-                        ''', (song['title'], song['artist'], song['album']))
-                    self.conn.commit()
+                    log_info(f"Removing {len(scrobbles_to_delete)} songs no longer in today's history")
+                    self.store.delete_scrobbles(scrobbles_to_delete)
 
         now = int(time.time())
         is_first_time = last_success_at is None or last_success_at < start_of_day(now)
 
-        # Determine which songs to scrobble using smart position tracking
         songs_to_process = self.position_tracker.detect_songs_to_scrobble(
-            today_songs, database_songs, is_first_time
+            today_songs, database_scrobbles, is_first_time
         )
 
         # Count how many will actually be scrobbled
@@ -318,31 +255,14 @@ class ImprovedProcess:
                     continue
 
                 # Update/insert in database
-                existing_song = cursor.execute('''
-                    SELECT id, max_array_position FROM scrobbles
-                    WHERE track_name = ? AND artist_name = ? AND album_name = ?
-                ''', (song['title'], song['artist'], song['album'])).fetchone()
+                existing_scrobble = self.store.find_scrobble(song['title'], song['artist'], song['album'])
 
-                if existing_song:
+                if existing_scrobble:
                     # Update existing song
-                    song_id, current_max = existing_song
-                    new_max = max(current_max or position, position)
-
-                    cursor.execute('''
-                        UPDATE scrobbles
-                        SET array_position = ?, max_array_position = ?, scrobbled_at = CURRENT_TIMESTAMP
-                        WHERE id = ?
-                    ''', (position, new_max, song_id))
+                    new_max = max(existing_scrobble.max_array_position or position, position)
+                    self.store.update_scrobble_position(existing_scrobble.id, position, new_max)
                 else:
-                    # Insert new song
-                    cursor.execute('''
-                        INSERT INTO scrobbles
-                        (track_name, artist_name, album_name, array_position, max_array_position)
-                        VALUES (?, ?, ?, ?, ?)
-                    ''', (song['title'], song['artist'], song['album'], position, position))
-
-                self.conn.commit()
-
+                    self.store.insert_scrobble(song['title'], song['artist'], song['album'], position, position)
             except Exception as error:
                 failure_type = self.scrobbler.categorize_error(error)
                 log_error(f'Failed to process "{song["title"]}" by {song["artist"]}: {error} ({failure_type.value})')
@@ -356,10 +276,7 @@ class ImprovedProcess:
         # error - otherwise the next run's window would wrongly start from "now"
         # instead of correctly spanning the gap this run failed to cover.
         if not self.dry_run and not had_fatal_error:
-            cursor.execute('UPDATE run_state SET last_success_at = ? WHERE id = 1', (now,))
-            self.conn.commit()
-
-        cursor.close()
+            self.store.update_last_success_at(now)
 
         print()
         if self.dry_run:
@@ -416,7 +333,9 @@ def main():
 
     try:
         cookie = get_cookie(args.set_cookie)
-        process = ImprovedProcess(cookie, dry_run=args.dry_run)
+        store = Store()
+        store.migrate()
+        process = ImprovedProcess(store, cookie, dry_run=args.dry_run)
         failure = process.execute()
         if failure is None:
             return 0

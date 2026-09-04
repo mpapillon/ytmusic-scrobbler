@@ -6,25 +6,26 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scrobble_utils import (
-    DatabaseSong,
     PositionTracker,
     ScrobbleTimestampCalculator,
     compute_scrobble_window,
 )
+from store import Scrobble
 
 SONG_A = {'title': 'Song A', 'artist': 'Artist A', 'album': 'Album A'}
 SONG_B = {'title': 'Song B', 'artist': 'Artist B', 'album': 'Album B'}
 SONG_C = {'title': 'Song C', 'artist': 'Artist C', 'album': 'Album C'}
 
 
-def db_entry(song: dict[str, str], array_position: int) -> DatabaseSong:
-    return {
-        'title': song['title'],
-        'artist': song['artist'],
-        'album': song['album'],
-        'array_position': array_position,
-        'max_array_position': array_position,
-    }
+def db_entry(song: dict[str, str], array_position: int) -> Scrobble:
+    return Scrobble(
+        id=1,
+        track_name=song['title'],
+        artist_name=song['artist'],
+        album_name=song['album'],
+        array_position=array_position,
+        max_array_position=array_position,
+    )
 
 
 class TestDetectSongsToScrobbleCalibration(unittest.TestCase):

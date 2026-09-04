@@ -11,6 +11,7 @@ from typing import Literal, NotRequired, TypedDict, final
 
 import lastpy
 from errors import FailureType, ScrobblerError
+from store import Scrobble
 
 
 def log_info(message: str) -> None:
@@ -24,19 +25,12 @@ def log_warning(message: str) -> None:
 def log_error(message: str) -> None:
     print(f"Error: {message}", file=sys.stderr)
 
-class DatabaseSong(TypedDict):
-    title: str
-    artist: str
-    album: str
-    array_position: int
-    max_array_position: int
-
 class SongToScrobble(TypedDict):
     song: dict[str, str]          # élément de today_songs
     position: int
     reason: Literal['calibration', 'new_song', 'reproduction', 'position_update']
     should_scrobble: bool
-    previous_position: NotRequired[int]
+    previous_position: NotRequired[int | None]
 
 def start_of_day(now: int) -> int:
     """Midnight (local time) of the calendar day containing `now`."""
@@ -282,7 +276,7 @@ class PositionTracker:
     @staticmethod
     def detect_songs_to_scrobble(
         today_songs: list[dict[str, str]],
-        database_songs: list[DatabaseSong],
+        database_scrobbles: list[Scrobble],
         is_first_time: bool = False
     ) -> list[SongToScrobble]:
         """
@@ -315,15 +309,15 @@ class PositionTracker:
                 current_position = i + 1
 
                 # Find matching song in database
-                saved_song = None
-                for db_song in database_songs:
-                    if (db_song['title'] == song['title'] and
-                        db_song['artist'] == song['artist'] and
-                        db_song['album'] == song['album']):
-                        saved_song = db_song
+                saved_scrobble: Scrobble | None = None
+                for db_scrobble in database_scrobbles:
+                    if (db_scrobble.track_name == song['title'] and
+                        db_scrobble.artist_name == song['artist'] and
+                        db_scrobble.album_name == song['album']):
+                        saved_scrobble = db_scrobble
                         break
 
-                if not saved_song:
+                if not saved_scrobble:
                     # New song - scrobble it
                     songs_to_scrobble.append({
                         'song': song,
@@ -331,14 +325,14 @@ class PositionTracker:
                         'reason': 'new_song',
                         'should_scrobble': True
                     })
-                elif current_position < saved_song.get('array_position', float('inf')):
+                elif current_position < (saved_scrobble.array_position or int('inf')):
                     # Re-reproduction - song moved up in the list (better position than previous session)
                     songs_to_scrobble.append({
                         'song': song,
                         'position': current_position,
                         'reason': 'reproduction',
                         'should_scrobble': True,
-                        'previous_position': saved_song.get('array_position')
+                        'previous_position': saved_scrobble.array_position
                     })
                 else:
                     # Song exists and hasn't moved up - just update position
