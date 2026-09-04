@@ -55,7 +55,8 @@ load_dotenv(find_dotenv(usecwd=True))
 
 @final
 class ImprovedProcess:
-    def __init__(self, dry_run: bool = False):
+    def __init__(self, cookie: str, dry_run: bool = False):
+        self.cookie = cookie
         self.dry_run = dry_run
         self.api_key = os.environ.get('LAST_FM_API')
         self.api_secret = os.environ.get('LAST_FM_API_SECRET')
@@ -143,36 +144,6 @@ class ImprovedProcess:
             f"Open {auth_url} and approve access, then rerun the script."
         )
 
-    def get_cookie_from_env_or_input(self) -> str:
-        """Get YouTube Music cookie from environment or user input"""
-        cookie = os.environ.get('YTMUSIC_COOKIE')
-
-        if not cookie:
-            print("YouTube Music cookie required.")
-            print("Please copy your YouTube Music cookie from your browser.")
-            print("To get your cookie:")
-            print("1. Go to https://music.youtube.com in your browser")
-            print("2. Open Developer Tools (F12)")
-            print("3. Go to Network tab")
-            print("4. Refresh the page")
-            print("5. Find any request to music.youtube.com")
-            print("6. Copy the entire 'Cookie' header value")
-            print("The cookie should contain '__Secure-3PAPISID=' among other values.")
-
-            cookie = input("Paste your YouTube Music cookie here: ").strip()
-
-            if cookie:
-                # Optionally save it to .env for future use
-                save_cookie = input("Save cookie to .env file for future use? (y/n): ").lower().startswith('y')
-                if save_cookie:
-                    set_key('.env', 'YTMUSIC_COOKIE', cookie)
-                    log_info("Cookie saved to .env file")
-
-        if not cookie:
-            raise ValueError("YouTube Music cookie is required")
-
-        return cookie
-
     def handle_authentication_error(self, error: Exception) -> None:
         """Log an authentication failure with guidance for the user"""
         log_error(f"YouTube Music authentication failed: {error}")
@@ -184,10 +155,6 @@ class ImprovedProcess:
     def execute(self) -> FailureType | None:
         """Run the full fetch/filter/scrobble flow. Returns None on success, or the
         FailureType that ended the run early."""
-        # Get YouTube Music cookie (raises ValueError if unavailable - a config
-        # problem for the caller to handle, not a categorized runtime failure)
-        cookie = self.get_cookie_from_env_or_input()
-
         if self.dry_run:
             log_info("Dry run mode: no songs will actually be scrobbled to Last.fm.")
 
@@ -206,8 +173,7 @@ class ImprovedProcess:
 
         log_info("Fetching YouTube Music history...")
         try:
-            # Use our new HTML-based history fetcher (no YTMusic API dependency)
-            history = get_ytmusic_history_from_cookie(cookie)
+            history = get_ytmusic_history_from_cookie(self.cookie)
         except Exception as error:
             failure_type = self.scrobbler.categorize_error(error)
 
@@ -418,6 +384,33 @@ class ImprovedProcess:
             return FailureType.AUTH
         return None
 
+def get_cookie(args_cookie: str | None) -> str:
+    """Get YouTube Music cookie from args or environment"""
+    env_cookie = os.environ.get('YTMUSIC_COOKIE')
+    cookie = args_cookie or env_cookie
+
+    if not cookie:
+        print("YouTube Music cookie required.", file=sys.stderr)
+        print(
+            "Please set your YouTube Music cookie from your browser with `--set-cookie` argument "
+            "or `YTMUSIC_COOKIE` environment variable.",
+            file=sys.stderr
+        )
+        print("To get your cookie:", file=sys.stderr)
+        print("1. Go to https://music.youtube.com in your browser", file=sys.stderr)
+        print("2. Open Developer Tools (F12)", file=sys.stderr)
+        print("3. Go to Network tab", file=sys.stderr)
+        print("4. Refresh the page", file=sys.stderr)
+        print("5. Find any request to music.youtube.com", file=sys.stderr)
+        print("6. Copy the entire 'Cookie' header value", file=sys.stderr)
+        print("The cookie should contain '__Secure-3PAPISID=' among other values.", file=sys.stderr)
+        raise ValueError("YouTube Music cookie is required")
+
+    if args_cookie and args_cookie != env_cookie:
+        set_key('.env', 'YTMUSIC_COOKIE', cookie)
+        log_info("Cookie saved to .env file")
+
+    return cookie
 
 def main():
     """Main entry point"""
@@ -427,10 +420,15 @@ def main():
         action='store_true',
         help="Fetch and process history without actually scrobbling to Last.fm or updating the local database"
     )
+    parser.add_argument(
+        '-c', '--set-cookie',
+        help="Save the specified cookie for authentication"
+    )
     args = parser.parse_args()
 
     try:
-        process = ImprovedProcess(dry_run=args.dry_run)
+        cookie = get_cookie(args.set_cookie)
+        process = ImprovedProcess(cookie, dry_run=args.dry_run)
         failure = process.execute()
         if failure is None:
             return 0

@@ -55,7 +55,7 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
         self.addCleanup(self.tmpdir.cleanup)
 
     def new_process(self, dry_run=False):
-        return start_standalone.ImprovedProcess(dry_run=dry_run)
+        return start_standalone.ImprovedProcess("fake cookie", dry_run=dry_run)
 
     def test_initial_run_is_calibration_only(self):
         self.history[:] = [SONG_1, SONG_2]
