@@ -46,12 +46,32 @@ BROWSER_JSON_PATH = "browser.json"
 MAX_BROWSER_SETUP_ATTEMPTS = 3
 
 
+def _format_ts(ts: int | None) -> str:
+    if ts is None:
+        return "never"
+    local = datetime.fromtimestamp(ts, tz=datetime.now().astimezone().tzinfo)
+    return local.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _parse_local_iso(value: str) -> datetime:
+    """Parse an ISO 8601 date/datetime as local time (tz info dropped). Raises ConfigError on bad format."""
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        raise ConfigError(f"Invalid ISO 8601 datetime: {value!r}") from None
+    if parsed.tzinfo is not None:
+        parsed = parsed.replace(tzinfo=None)
+    return parsed
+
+
 @final
 class ImprovedProcess:
-    def __init__(self, store: Store, ytmusic: YTMusic, to_datetime: datetime, dry_run: bool = False):
+    def __init__(self, store: Store, ytmusic: YTMusic, to_datetime: datetime, dry_run: bool = False,
+                 anchor_override: int | None = None):
         self.ytmusic = ytmusic
         self.to_datetime = to_datetime
         self.dry_run = dry_run
+        self.anchor_override = anchor_override
         self.api_key = os.environ.get('LAST_FM_API')
         self.api_secret = os.environ.get('LAST_FM_API_SECRET')
         if not self.api_key or not self.api_secret:
@@ -120,7 +140,10 @@ class ImprovedProcess:
         if self.dry_run:
             log_info("Dry run mode: no songs will actually be scrobbled to Last.fm.\n")
 
-        last_success_at = self.store.get_last_success_at()
+        last_success_at = self.anchor_override if self.anchor_override is not None \
+            else self.store.get_last_success_at()
+        if self.anchor_override is not None and self.dry_run:
+            log_info(f"[DRY RUN] Using last_success_at override: {_format_ts(self.anchor_override)}")
 
         if not self.session:
             try:
@@ -347,12 +370,18 @@ def main():
     )
     parser.add_argument(
         '--to-datetime',
+        metavar="<ISO 8601>",
         help="Scrobble to the specified datetime (ISO 8601 format)"
     )
     parser.add_argument(
         '-l', '--login',
         action='store_true',
         help="Interactively paste YouTube Music request headers to refresh credentials (nothing is scrobbled)"
+    )
+    parser.add_argument(
+        '--set-last-success',
+        metavar="<ISO 8601>",
+        help="Manually set run_state.last_success_at before the run (manual catch-up); rejected if in the future"
     )
     args = parser.parse_args()
 
@@ -365,17 +394,35 @@ def main():
         return 0
 
     to_datetime = datetime.now()
-    if args.to_datetime:
-        parsed = datetime.fromisoformat(args.to_datetime)
-        if parsed.tzinfo is not None:
-            parsed = parsed.replace(tzinfo=None)
-        if parsed > to_datetime:
-            log_error("to_datetime must be in the past")
-            return 78
-        to_datetime = parsed
-        log_info(f"Scrobbling to time: {to_datetime}")
 
     try:
+        if args.to_datetime:
+            parsed = _parse_local_iso(args.to_datetime)
+            if parsed > to_datetime:
+                log_error("to_datetime must be in the past")
+                return 78
+            to_datetime = parsed
+            log_info(f"Scrobbling to time: {to_datetime}")
+
+        store = Store()
+        store.migrate()
+
+        anchor_override: int | None = None
+        if args.set_last_success:
+            anchor = _parse_local_iso(args.set_last_success)
+            if anchor > to_datetime:
+                log_error("--set-last-success must be in the past")
+                return 78
+            anchor_override = int(anchor.timestamp())
+            old = store.get_last_success_at()
+            if args.dry_run:
+                log_info(f"[DRY RUN] Would set last_success_at: {_format_ts(old)} -> {_format_ts(anchor_override)} "
+                         f"(not written, using in memory for this run)")
+            else:
+                with store.transaction():
+                    store.update_last_success_at(anchor_override)
+                log_info(f"last_success_at manually set: {_format_ts(old)} -> {_format_ts(anchor_override)}")
+
         if not os.path.isfile(BROWSER_JSON_PATH):
             raise ConfigError(
                 f"YouTube Music credentials not found: {BROWSER_JSON_PATH} does not exist. "
@@ -388,9 +435,8 @@ def main():
                 f"Could not load YouTube Music credentials from {BROWSER_JSON_PATH}: {e}. "
                 "Run this script with --login to refresh them."
             ) from e
-        store = Store()
-        store.migrate()
-        process = ImprovedProcess(store, ytmusic, to_datetime, dry_run=args.dry_run)
+        process = ImprovedProcess(store, ytmusic, to_datetime, dry_run=args.dry_run,
+                                  anchor_override=anchor_override)
         failure = process.execute()
         if failure is None:
             return 0

@@ -42,6 +42,7 @@ pip install -r requirements.txt
 python start_standalone.py
 python start_standalone.py --dry-run  # preview, no Last.fm calls or DB writes
 python start_standalone.py --login    # refresh browser.json credentials
+python start_standalone.py --set-last-success "2026-09-10T00:05"  # manual catch-up: write run_state.last_success_at (rejected if future), then run normally
 ```
 Designed to run repeatedly via cron at any interval - timing adapts to the real gap between runs.
 
@@ -53,7 +54,7 @@ python -m unittest discover -s tests -t .
 
 ## Code Architecture
 
-- `start_standalone.py`: primary implementation (`ImprovedProcess.execute()`), plus `update_browser_json()` for the `--login` flow
+- `start_standalone.py`: primary implementation (`ImprovedProcess.execute()`, with an optional `anchor_override` for `--set-last-success` catch-up runs), plus `update_browser_json()` for the `--login` flow
 - `scrobble_utils.py`: `HistorySong` (normalizes raw `ytmusicapi.get_history()` entries: first artist, album fallback to title, drops " - Topic" channels), `ScrobbleTimestampCalculator` (fake timestamps), `PositionTracker` (new/replay detection), `SmartScrobbler` (Last.fm API + error categorization)
 - `date_detection.py`: multilingual "Today" detection (50+ languages), applied to the `played` shelf label strings
 - `lastpy/`: custom Last.fm API client (`authorize`, `scrobble`)

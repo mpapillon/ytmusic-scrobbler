@@ -102,6 +102,10 @@ class TestMainCredentialLoading(unittest.TestCase):
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)
         self.path = os.path.join(tmpdir.name, 'browser.json')
+        # main() now creates the Store (./data.db) before loading credentials
+        orig_cwd = os.getcwd()
+        self.addCleanup(os.chdir, orig_cwd)
+        os.chdir(tmpdir.name)
 
     def run_main(self):
         with patch.object(start_standalone, 'BROWSER_JSON_PATH', self.path), \
