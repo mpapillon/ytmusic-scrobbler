@@ -6,23 +6,24 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scrobble_utils import (
+    HistorySong,
     PositionTracker,
     ScrobbleTimestampCalculator,
     compute_scrobble_window,
 )
 from store import Scrobble
 
-SONG_A = {'title': 'Song A', 'artist': 'Artist A', 'album': 'Album A'}
-SONG_B = {'title': 'Song B', 'artist': 'Artist B', 'album': 'Album B'}
-SONG_C = {'title': 'Song C', 'artist': 'Artist C', 'album': 'Album C'}
+SONG_A = HistorySong('Song A', 'Artist A', 'Album A', played='Today')
+SONG_B = HistorySong('Song B', 'Artist B', 'Album B', played='Today')
+SONG_C = HistorySong('Song C', 'Artist C', 'Album C', played='Today')
 
 
-def db_entry(song: dict[str, str], array_position: int) -> Scrobble:
+def db_entry(song: HistorySong, array_position: int) -> Scrobble:
     return Scrobble(
         id=1,
-        track_name=song['title'],
-        artist_name=song['artist'],
-        album_name=song['album'],
+        track_name=song.title,
+        artist_name=song.artist,
+        album_name=song.album,
         array_position=array_position,
         max_array_position=array_position,
     )
@@ -73,7 +74,7 @@ class TestDetectSongsToScrobbleNominal(unittest.TestCase):
         self.assertFalse(b_item['should_scrobble'])
 
     def test_same_title_different_artist_is_not_a_match(self):
-        same_title_other_artist = {'title': 'Song A', 'artist': 'Someone Else', 'album': 'Other Album'}
+        same_title_other_artist = HistorySong('Song A', 'Someone Else', 'Other Album', played='Today')
         today = [same_title_other_artist]
         database_songs = [db_entry(SONG_A, 1)]
         result = PositionTracker.detect_songs_to_scrobble(today, database_songs, is_first_time=False)
@@ -83,7 +84,7 @@ class TestDetectSongsToScrobbleNominal(unittest.TestCase):
         self.assertTrue(result[0]['should_scrobble'])
 
     def test_same_title_and_artist_different_album_is_not_a_match(self):
-        same_title_artist_other_album = {'title': 'Song A', 'artist': 'Artist A', 'album': 'Live Version'}
+        same_title_artist_other_album = HistorySong('Song A', 'Artist A', 'Live Version', played='Today')
         today = [same_title_artist_other_album]
         database_songs = [db_entry(SONG_A, 1)]
         result = PositionTracker.detect_songs_to_scrobble(today, database_songs, is_first_time=False)

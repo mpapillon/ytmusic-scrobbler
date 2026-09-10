@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
 """
 Standalone YouTube Music Last.fm Scrobbler
-- No external API dependencies (direct HTML page scraping)
+- YouTube Music history via ytmusicapi (browser.json auth, see README)
 - Multilingual date detection (50+ languages)
 - Smart timestamp distribution (logarithmic, bounded to the real elapsed time since the last successful run)
 - Better position tracking and re-reproduction detection
 - Robust error handling and categorization
 """
 import argparse
-from datetime import datetime, timezone
+import json
 import os
 import sys
 import time
 import webbrowser
 import xml.etree.ElementTree as ET
+from datetime import datetime
 from typing import final
 
 from dotenv import find_dotenv, load_dotenv, set_key
+from ytmusicapi import YTMusic, setup
+from ytmusicapi.exceptions import YTMusicUserError
 
 import lastpy
 from date_detection import (
@@ -26,6 +29,7 @@ from date_detection import (
 )
 from errors import ConfigError, FailureType, LastFmError
 from scrobble_utils import (
+    HistorySong,
     PositionTracker,
     SmartScrobbler,
     compute_scrobble_window,
@@ -36,16 +40,16 @@ from scrobble_utils import (
 )
 from store import Store
 
-# Import our new modules
-from ytmusic_fetcher import get_ytmusic_history_from_cookie
-
 load_dotenv(find_dotenv(usecwd=True))
+
+BROWSER_JSON_PATH = "browser.json"
+MAX_BROWSER_SETUP_ATTEMPTS = 3
 
 
 @final
 class ImprovedProcess:
-    def __init__(self, store: Store, cookie: str, to_datetime: datetime, dry_run: bool = False):
-        self.cookie = cookie
+    def __init__(self, store: Store, ytmusic: YTMusic, to_datetime: datetime, dry_run: bool = False):
+        self.ytmusic = ytmusic
         self.to_datetime = to_datetime
         self.dry_run = dry_run
         self.api_key = os.environ.get('LAST_FM_API')
@@ -100,19 +104,21 @@ class ImprovedProcess:
             f"Open {auth_url} and approve access, then rerun the script."
         )
 
-    def handle_authentication_error(self, error: Exception) -> None:
-        """Log an authentication failure with guidance for the user"""
-        log_error(f"YouTube Music authentication failed: {error}")
-        log_error("Your YouTube Music cookie appears to be expired or invalid. Please update it:")
-        print("1. Go to https://music.youtube.com and sign in", file=sys.stderr)
-        print("2. Copy the new cookie from Developer Tools", file=sys.stderr)
-        print("3. Run this script again", file=sys.stderr)
+    def handle_authentication_error(self, error: Exception | None = None) -> None:
+        """Log an authentication failure with guidance for refreshing credentials"""
+        if error is not None:
+            log_error(f"YouTube Music authentication failed: {error}")
+        else:
+            log_error("YouTube Music authentication failed: the history request returned no data.")
+        log_error("Your YouTube Music credentials appear to be expired or invalid.")
+        log_error("Run this script with --login and paste the request headers of a signed-in")
+        log_error("music.youtube.com 'browse' request when prompted.")
 
     def execute(self) -> FailureType | None:
         """Run the full fetch/filter/scrobble flow. Returns None on success, or the
         FailureType that ended the run early."""
         if self.dry_run:
-            log_info("Dry run mode: no songs will actually be scrobbled to Last.fm.")
+            log_info("Dry run mode: no songs will actually be scrobbled to Last.fm.\n")
 
         last_success_at = self.store.get_last_success_at()
 
@@ -126,7 +132,7 @@ class ImprovedProcess:
 
         log_info("Fetching YouTube Music history...")
         try:
-            history = get_ytmusic_history_from_cookie(self.cookie)
+            raw_history = self.ytmusic.get_history()
         except Exception as error:
             failure_type = self.scrobbler.categorize_error(error)
 
@@ -136,20 +142,29 @@ class ImprovedProcess:
                 log_error(f"Failed to fetch history: {error} ({failure_type.value})")
             return failure_type
 
+        if raw_history is None:
+            # Expired browser.json credentials: the endpoint answers with a
+            # sign-in page instead of history, so get_history() returns None
+            # without raising. Treat it as an auth failure.
+            self.handle_authentication_error()
+            return FailureType.AUTH
+
+        history = [s for s in map(HistorySong.from_api_item, raw_history) if s is not None]
         log_info(f"Retrieved {len(history)} songs from history")
 
         print()
         log_info("Filtering songs played today...")
-        today_songs = [song for song in history if is_today_song(song.get('playedAt'))]
+        today_songs = [song for song in history if is_today_song(song.played)]
 
         # Log unknown date values for future expansion
-        unknown_values = get_unknown_date_values(history)
+        played_values = [song.played for song in history]
+        unknown_values = get_unknown_date_values(played_values)
         if unknown_values:
             log_warning(f"Unknown date formats detected: {', '.join(unknown_values)} "
                         f"(please report these to the developer)")
 
         # Log detected languages
-        detected_languages = get_detected_languages(history)
+        detected_languages = get_detected_languages(played_values)
         if detected_languages:
             log_info(f"Detected languages in today's songs: {', '.join(detected_languages)}")
 
@@ -169,9 +184,9 @@ class ImprovedProcess:
             for db_song in database_scrobbles:
                 found = False
                 for today_song in today_songs:
-                    if (today_song['title'] == db_song.track_name and
-                        today_song['artist'] == db_song.artist_name and
-                        today_song['album'] == db_song.album_name):
+                    if (today_song.title == db_song.track_name and
+                        today_song.artist == db_song.artist_name and
+                        today_song.album == db_song.album_name):
                         found = True
                         break
 
@@ -209,11 +224,6 @@ class ImprovedProcess:
 
         log_info(f"Processing {len(songs_to_process)} songs ({total_to_scrobble} will be scrobbled)")
 
-        # Bound the fake-timestamp distribution window to the real elapsed time since
-        # the last successful run, never going before the start of today - so a short
-        # cron interval keeps the window tight instead of getting stretched into a
-        # misleadingly wide spread. (Gaps wide enough to lose that same-day anchor are
-        # calibration runs, per is_first_time above, and never reach this window.)
         window_start, window_end = compute_scrobble_window(last_success_at, now)
 
         songs_scrobbled = 0
@@ -231,13 +241,13 @@ class ImprovedProcess:
                     if should_scrobble:
                         action = "NEW" if reason == "new_song" else "RE-SCROBBLE"
                         songs_scrobbled += 1
-                        log_info(f"[DRY RUN] Would scrobble ({action}): \"{song['title']}\" by {song['artist']}")
+                        log_info(f"[DRY RUN] Would scrobble ({action}): \"{song.title}\" by {song.artist}")
                         scrobble_position += 1
                     continue
 
                 with self.store.transaction():
                     existing_scrobble = self.store.find_scrobble(
-                        song['title'], song['artist'], song['album']
+                        song.title, song.artist, song.album
                     )
 
                     if existing_scrobble:
@@ -245,7 +255,7 @@ class ImprovedProcess:
                         self.store.update_scrobble_position(existing_scrobble.id, position, new_max)
                     else:
                         self.store.insert_scrobble(
-                            song['title'], song['artist'], song['album'], position, position
+                            song.title, song.artist, song.album, position, position
                         )
 
                     if should_scrobble:
@@ -261,14 +271,14 @@ class ImprovedProcess:
 
                         if success:
                             songs_scrobbled += 1
-                            log_info(f"{action}: \"{song['title']}\" by {song['artist']}")
+                            log_info(f"{action}: \"{song.title}\" by {song.artist}")
                             scrobble_position += 1
                         else:
-                            log_info(f"FAILED: \"{song['title']}\" by {song['artist']} (Last.fm rejected)")
+                            log_info(f"FAILED: \"{song.title}\" by {song.artist} (Last.fm rejected)")
 
             except Exception as error:
                 failure_type = self.scrobbler.categorize_error(error)
-                log_error(f'Failed to process "{song["title"]}" by {song["artist"]}: {error} ({failure_type.value})')
+                log_error(f'Failed to process "{song.title}" by {song.artist}: {error} ({failure_type.value})')
 
                 # Continue processing other songs unless it's an auth error
                 if failure_type == FailureType.AUTH:
@@ -290,33 +300,42 @@ class ImprovedProcess:
             return FailureType.AUTH
         return None
 
-def get_cookie(args_cookie: str | None) -> str:
-    """Get YouTube Music cookie from args or environment"""
-    env_cookie = os.environ.get('YTMUSIC_COOKIE')
-    cookie = args_cookie or env_cookie
-
-    if not cookie:
-        print("YouTube Music cookie required.", file=sys.stderr)
-        print(
-            "Please set your YouTube Music cookie from your browser with `--set-cookie` argument "
-            "or `YTMUSIC_COOKIE` environment variable.",
-            file=sys.stderr
+def _check_browser_json(filepath: str) -> None:
+    with open(filepath, encoding='utf-8') as f:
+        headers = json.load(f)
+    if 'SAPISIDHASH' not in headers.get('authorization', ''):
+        raise YTMusicUserError(
+            "browser.json has no valid 'authorization' header (SAPISIDHASH). "
+            "Copy the request headers of a 'browse' request while signed in, "
+            "making sure they include 'authorization'."
         )
-        print("To get your cookie:", file=sys.stderr)
-        print("1. Go to https://music.youtube.com in your browser", file=sys.stderr)
-        print("2. Open Developer Tools (F12)", file=sys.stderr)
-        print("3. Go to Network tab", file=sys.stderr)
-        print("4. Refresh the page", file=sys.stderr)
-        print("5. Find any request to music.youtube.com", file=sys.stderr)
-        print("6. Copy the entire 'Cookie' header value", file=sys.stderr)
-        print("The cookie should contain '__Secure-3PAPISID=' among other values.", file=sys.stderr)
-        raise ConfigError("YouTube Music cookie is required")
 
-    if args_cookie and args_cookie != env_cookie:
-        set_key('.env', 'YTMUSIC_COOKIE', cookie)
-        log_info("Cookie saved to .env file")
 
-    return cookie
+def update_browser_json(filepath: str | None = None) -> None:
+    if filepath is None:
+        filepath = BROWSER_JSON_PATH
+    log_info("Refresh YouTube Music credentials. To copy the request headers:")
+    log_info("1. Go to https://music.youtube.com and sign in")
+    log_info("2. Open Developer Tools (F12) -> Network tab, refresh the page")
+    log_info("3. Select any 'browse' request to music.youtube.com")
+    log_info("4. In 'Request Headers', select all and copy (must include 'cookie',")
+    log_info("   'authorization' and 'x-goog-authuser')\n")
+
+    for attempt in range(1, MAX_BROWSER_SETUP_ATTEMPTS + 1):
+        try:
+            setup(filepath=filepath)
+            _check_browser_json(filepath)
+        except (OSError, ValueError, YTMusicUserError) as e:
+            remaining = MAX_BROWSER_SETUP_ATTEMPTS - attempt
+            log_error(str(e))
+            if remaining <= 0:
+                raise ConfigError(f"Could not update {filepath} after {MAX_BROWSER_SETUP_ATTEMPTS} attempts")
+            log_error(f"{remaining} attempt(s) left.")
+            continue
+
+        log_info(f"YouTube Music credentials saved to {filepath}")
+        return
+
 
 def main():
     """Main entry point"""
@@ -327,14 +346,23 @@ def main():
         help="Fetch and process history without actually scrobbling to Last.fm or updating the local database"
     )
     parser.add_argument(
-        '-c', '--set-cookie',
-        help="Save the specified cookie for authentication"
-    )
-    parser.add_argument(
         '--to-datetime',
         help="Scrobble to the specified datetime (ISO 8601 format)"
     )
+    parser.add_argument(
+        '-l', '--login',
+        action='store_true',
+        help="Interactively paste YouTube Music request headers to refresh credentials (nothing is scrobbled)"
+    )
     args = parser.parse_args()
+
+    if args.login:
+        try:
+            update_browser_json()
+        except ConfigError as e:
+            log_error(str(e))
+            return 78
+        return 0
 
     to_datetime = datetime.now()
     if args.to_datetime:
@@ -348,15 +376,25 @@ def main():
         log_info(f"Scrobbling to time: {to_datetime}")
 
     try:
-        cookie = get_cookie(args.set_cookie)
+        if not os.path.isfile(BROWSER_JSON_PATH):
+            raise ConfigError(
+                f"YouTube Music credentials not found: {BROWSER_JSON_PATH} does not exist. "
+                "Run this script with --login to create it."
+            )
+        try:
+            ytmusic = YTMusic(BROWSER_JSON_PATH)
+        except (OSError, ValueError, YTMusicUserError) as e:
+            raise ConfigError(
+                f"Could not load YouTube Music credentials from {BROWSER_JSON_PATH}: {e}. "
+                "Run this script with --login to refresh them."
+            ) from e
         store = Store()
         store.migrate()
-        process = ImprovedProcess(store, cookie, to_datetime, dry_run=args.dry_run)
+        process = ImprovedProcess(store, ytmusic, to_datetime, dry_run=args.dry_run)
         failure = process.execute()
         if failure is None:
             return 0
         return failure.exit_code
-
     except ConfigError as e:
         log_error(str(e))
         return 78

@@ -28,16 +28,24 @@ The YouTube Music Last.fm Scrobbler is a Python application that fetches your Yo
 python start_standalone.py
 ```
 
-On first run, you'll be prompted to:
-1. **Authenticate with Last.fm** (browser will open automatically)  
-2. **Provide your YouTube Music cookie** (detailed instructions provided)
+On first run you need to:
+1. **Create your YouTube Music credentials** once, with the interactive login flow:
+   ```bash
+   python start_standalone.py --login
+   ```
+2. **Authenticate with Last.fm** - on the next run, the script opens your browser once and saves `LASTFM_SESSION` to `.env`
 
-**To get your YouTube Music cookie:**
-1. Go to [https://music.youtube.com](https://music.youtube.com) in your browser
+**To get your YouTube Music request headers** (pasted when `--login` prompts you):
+1. Open a **private/incognito window**, go to [https://music.youtube.com](https://music.youtube.com) and sign in there
 2. Open Developer Tools (F12) → Network tab  
-3. Refresh the page and find any `music.youtube.com` request
-4. Copy the complete `Cookie` header value
-5. Paste when prompted (or save to `.env` as `YTMUSIC_COOKIE`)
+3. Refresh the page and select any `browse` request to `music.youtube.com`
+4. Copy the complete **Request Headers** (they must include `cookie`, `authorization` and `x-goog-authuser`)
+5. Paste into the terminal, press Enter then Ctrl-D — this creates `browser.json`
+
+> **Tip:** sign in in a dedicated private window rather than your daily browser
+> profile. Your regular sessions keep rotating their token cookies (`*PSIDTS`),
+> which expires the copied headers faster; a private window nobody else uses
+> stays untouched, so the credentials last noticeably longer.
 
 ---
 
@@ -45,7 +53,7 @@ On first run, you'll be prompted to:
 
 ### 🌟 Standalone Version (`start_standalone.py`)
 
-- **No API dependencies** - Direct HTML scraping eliminates API rate limits
+- **ytmusicapi-based fetching** - History comes from `ytmusicapi.get_history()` (the same API the web player uses), so no fragile HTML parsing
 - **Multilingual support** - Detects "Today" in 50+ languages (English, Spanish, Chinese, Russian, Arabic, etc.)
 - **Smart timestamp distribution** - Logarithmic spread across the time since your last successful run, clamped to the current day. First run ever only calibrates position tracking (nothing is scrobbled).
 - **Better duplicate detection** - Tracks re-reproductions and position changes
@@ -53,8 +61,9 @@ On first run, you'll be prompted to:
 - **Enhanced logging** - Better visibility into processing and language detection
 
 **⚠️ Considerations:**
-- Requires copying cookie from browser (but provides detailed instructions)
-- Cookie needs periodic refresh (browser will notify when needed)
+- Credentials are Google session cookies, valid only while your browser session lives
+- Periodically refresh them with `python start_standalone.py --login` (the script tells you when they've expired)
+- Note: ytmusicapi's long-lived OAuth flow is currently broken upstream ([sigma67/ytmusicapi#813](https://github.com/sigma67/ytmusicapi/issues/813)), hence browser-header auth for now
 
 ---
 
@@ -83,14 +92,13 @@ CREATE TABLE run_state (                 -- Single row, last successful run
 
 ## 📝 How It Works
 
-1. **Fetches YouTube Music history page** directly via HTTP
-2. **Extracts embedded JSON data** from HTML using regex parsing
-3. **Detects today's songs** using multilingual date detection (50+ languages)
-4. **First run ever**: records today's songs as a position-tracking baseline, scrobbles nothing
-5. **Later runs**: smart position tracking identifies new songs and re-reproductions
-6. **Calculates timestamps**: logarithmic spread across the time since your last successful run, clamped to today
-7. **Scrobbles to Last.fm** with proper error handling and retry logic
-8. **Updates database** with enhanced tracking information
+1. **Fetches your play history** via `ytmusicapi.get_history()`
+2. **Detects today's songs** using multilingual date detection on the history shelf labels (50+ languages)
+3. **First run ever**: records today's songs as a position-tracking baseline, scrobbles nothing
+4. **Later runs**: smart position tracking identifies new songs and re-reproductions
+5. **Calculates timestamps**: logarithmic spread across the time since your last successful run, clamped to today
+6. **Scrobbles to Last.fm** with proper error handling and retry logic
+7. **Updates database** with enhanced tracking information
 
 ---
 
@@ -117,28 +125,28 @@ LAST_FM_API_SECRET=your_lastfm_api_secret
 
 # Added automatically after first run
 LASTFM_SESSION=your_session_token
-
-# Required for standalone version only  
-YTMUSIC_COOKIE=your_complete_browser_cookie
 ```
 
 ### Files Used
-| File      | Description              |
-|-----------|--------------------------|
-| `.env`    | API keys and tokens      |
-| `data.db` | SQLite tracking database |
+| File            | Description                                        |
+|-----------------|----------------------------------------------------|
+| `.env`          | API keys and tokens                                |
+| `browser.json`  | YouTube Music credentials (created by `--login`, keep private) |
+| `data.db`       | SQLite tracking database                             |
 
 ---
 
 ## 🐛 Troubleshooting
 
-**❌ "Cookie is missing __Secure-3PAPISID"**
-- Ensure you copied the complete cookie from Developer Tools
-- Make sure you're logged into YouTube Music in the browser
+**❌ "YouTube Music credentials not found: browser.json does not exist"**
+- Run `python start_standalone.py --login` to create it (see Quick Start)
 
-**❌ "Authentication failed"**  
-- Your cookie may have expired - get a fresh one from browser
-- Cookies typically last several hours to days
+**❌ "The following entries are missing in your headers: cookie, x-goog-authuser"**
+- You copied headers from the wrong request - pick a `browse` request while signed in
+
+**❌ "authentication failed" / history request returned no data**
+- Your `browser.json` credentials have expired - refresh them with `--login`
+- Sessions typically last days to weeks while you stay logged in in the browser
 
 **❌ "No songs played today"**
 - Check your YouTube Music language - multilingual detection should work
@@ -148,12 +156,13 @@ YTMUSIC_COOKIE=your_complete_browser_cookie
 
 ## 📋 Deployment
 
-1. Run locally first to complete Last.fm OAuth
-2. Copy `.env` file to server (includes `LASTFM_SESSION`)
-3. Set up cron job at any interval you like - timing adapts to the real gap between runs:
+1. Run locally first to complete Last.fm OAuth and create `browser.json`
+2. Copy `.env` **and `browser.json`** to the server (both contain secrets - keep them private)
+3. Set up cron job at any interval you like - timing adapts to the real gap between runs.
+   `browser.json` and `data.db` are resolved relative to the working directory, so `cd` into the project first:
    ```bash
    # e.g. every 15 minutes
-   */15 * * * * /path/to/python /path/to/start_standalone.py
+   */15 * * * * cd /path/to/ytmusic-scrobbler && /path/to/python start_standalone.py
    ```
 4. Test with `--dry-run` first to preview what a run would do without side effects
 

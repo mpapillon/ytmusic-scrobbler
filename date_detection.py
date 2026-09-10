@@ -217,20 +217,19 @@ def get_all_yesterday_variants() -> list[str]:
     return list(YESTERDAY_TRANSLATIONS.keys())
 
 
-def get_unknown_date_values(songs: list[dict[str, str]]) -> list[str]:
+def get_unknown_date_values(played_values: list[str]) -> list[str]:
     """
-    Get unknown playedAt values that should be logged for future expansion
-    
+    Get unrecognized 'played' values that should be logged for future expansion
+
     Args:
-        songs: List of songs with playedAt field
-        
+        played_values: Raw 'played' strings from the history entries
+
     Returns:
         List of unknown date values
     """
     unknown_values: set[str] = set()
     
-    for song in songs:
-        played_at = song.get('playedAt')
+    for played_at in played_values:
         if played_at:
             result = detect_date_value(played_at)
             if not result.is_today and not result.is_yesterday and played_at.strip():
@@ -239,20 +238,19 @@ def get_unknown_date_values(songs: list[dict[str, str]]) -> list[str]:
     return list(unknown_values)
 
 
-def get_detected_languages(songs: list[dict[str, str]]) -> set[str]:
+def get_detected_languages(played_values: list[str]) -> set[str]:
     """
     Get all detected languages from songs played today
     
     Args:
-        songs: List of songs with playedAt field
+        played_values: Raw 'played' strings from the history entries
         
     Returns:
         Set of detected language codes
     """
     detected_languages: set[str] = set()
     
-    for song in songs:
-        played_at = song.get('playedAt')
+    for played_at in played_values:
         result = detect_date_value(played_at)
         if result.detected_language and result.is_today:
             detected_languages.add(result.detected_language)

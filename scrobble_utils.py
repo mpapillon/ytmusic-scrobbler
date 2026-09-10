@@ -6,8 +6,9 @@ import hashlib
 import math
 import sys
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, NotRequired, TypedDict, final
+from typing import Any, Literal, NotRequired, TypedDict, final
 
 import lastpy
 from errors import FailureType, ScrobblerError
@@ -25,8 +26,30 @@ def log_warning(message: str) -> None:
 def log_error(message: str) -> None:
     print(f"Error: {message}", file=sys.stderr)
 
+@dataclass(frozen=True, slots=True)
+class HistorySong:
+    title: str
+    artist: str
+    album: str
+    played: str
+
+    @classmethod
+    def from_api_item(cls, item: dict[str, Any]) -> 'HistorySong | None':
+        """Build from a ytmusicapi get_history() entry. Returns None for entries
+        to drop: missing title/artist, or auto-generated ' - Topic' channels."""
+        title = item.get('title')
+        artists = item.get('artists') or []
+        artist = artists[0].get('name') if artists else None
+
+        if not title or not artist or artist.endswith(" - Topic"):
+            return None
+
+        album = (item.get('album') or {}).get('name') or title
+        return cls(title=title, artist=artist, album=album, played=item.get('played') or '')
+
+
 class SongToScrobble(TypedDict):
-    song: dict[str, str]          # élément de today_songs
+    song: HistorySong
     position: int
     reason: Literal['calibration', 'new_song', 'reproduction', 'position_update']
     should_scrobble: bool
@@ -181,7 +204,7 @@ class SmartScrobbler:
 
     def scrobble_song(
         self,
-        song: dict[str, str],
+        song: HistorySong,
         last_fm_session_key: str,
         timestamp: str
     ) -> bool:
@@ -189,7 +212,7 @@ class SmartScrobbler:
         Scrobble a single song to Last.fm
 
         Args:
-            song: Dict with title, artist, album keys
+            song: Normalized history entry (title, artist, album)
             last_fm_session_key: User's Last.fm session key
             timestamp: Unix timestamp as string
 
@@ -197,12 +220,12 @@ class SmartScrobbler:
             True if scrobble was successful, False otherwise
         """
         params = {
-            'album': self._sanitize_string(song['album']),
+            'album': self._sanitize_string(song.album),
             'api_key': self.last_fm_api_key,
             'method': 'track.scrobble',
             'timestamp': timestamp,
-            'track': self._sanitize_string(song['title']),
-            'artist': self._sanitize_string(song['artist']),
+            'track': self._sanitize_string(song.title),
+            'artist': self._sanitize_string(song.artist),
             'sk': last_fm_session_key,
         }
 
@@ -237,17 +260,17 @@ class SmartScrobbler:
 
                 if track_corrected != '0' or artist_corrected != '0':
                     log_warning(
-                        f'Last.fm corrected "{song["title"]}" by {song["artist"]} -> '
+                        f'Last.fm corrected "{song.title}" by {song.artist} -> '
                         f'"{track_elem.text}" by "{artist_elem.text}"'
                     )
 
                 if ignored_message is not None and ignored_message.text:
-                    log_warning(f'Last.fm ignored "{song["title"]}" by {song["artist"]}: {ignored_message.text}')
+                    log_warning(f'Last.fm ignored "{song.title}" by {song.artist}: {ignored_message.text}')
 
             # Return True if at least one scrobble was accepted (keeping original logic)
             return accepted != '0' or ignored == '0'
 
-        log_warning(f'Unexpected Last.fm response for "{song["title"]}" by {song["artist"]}: no scrobbles element')
+        log_warning(f'Unexpected Last.fm response for "{song.title}" by {song.artist}: no scrobbles element')
         return False
 
     def calculate_timestamp(
@@ -275,7 +298,7 @@ class PositionTracker:
 
     @staticmethod
     def detect_songs_to_scrobble(
-        today_songs: list[dict[str, str]],
+        today_songs: list[HistorySong],
         database_scrobbles: list[Scrobble],
         is_first_time: bool = False
     ) -> list[SongToScrobble]:
@@ -311,9 +334,9 @@ class PositionTracker:
                 # Find matching song in database
                 saved_scrobble: Scrobble | None = None
                 for db_scrobble in database_scrobbles:
-                    if (db_scrobble.track_name == song['title'] and
-                        db_scrobble.artist_name == song['artist'] and
-                        db_scrobble.album_name == song['album']):
+                    if (db_scrobble.track_name == song.title and
+                        db_scrobble.artist_name == song.artist and
+                        db_scrobble.album_name == song.album):
                         saved_scrobble = db_scrobble
                         break
 

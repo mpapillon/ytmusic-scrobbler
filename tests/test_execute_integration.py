@@ -9,22 +9,33 @@ import tempfile
 import time
 import unittest
 from datetime import datetime
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 os.environ.setdefault('LAST_FM_API', 'dummy')
 os.environ.setdefault('LAST_FM_API_SECRET', 'dummy')
-os.environ.setdefault('YTMUSIC_COOKIE', 'dummy')
 os.environ.setdefault('LASTFM_SESSION', 'dummy')
 
 import scrobble_utils
 import start_standalone
+from errors import FailureType
 from store import Store
 
-SONG_1 = {'title': 'Song1', 'artist': 'Art1', 'album': 'Alb1', 'playedAt': 'Today'}
-SONG_2 = {'title': 'Song2', 'artist': 'Art2', 'album': 'Alb2', 'playedAt': 'Today'}
-SONG_3 = {'title': 'Song3', 'artist': 'Art3', 'album': 'Alb3', 'playedAt': 'Today'}
+
+def api_song(title: str, artist: str, album: str) -> dict:
+    """Song in the raw format returned by ytmusicapi get_history()."""
+    return {
+        'title': title,
+        'artists': [{'name': artist}],
+        'album': {'name': album},
+        'played': 'Today',
+    }
+
+
+SONG_1 = api_song('Song1', 'Art1', 'Alb1')
+SONG_2 = api_song('Song2', 'Art2', 'Alb2')
+SONG_3 = api_song('Song3', 'Art3', 'Alb3')
 
 
 class ExecuteIntegrationTestCase(unittest.TestCase):
@@ -36,21 +47,19 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
         self.history = []
         self.scrobbled = []
 
-        patcher_history = patch.object(
-            start_standalone, 'get_ytmusic_history_from_cookie', side_effect=lambda cookie: list(self.history)
-        )
+        self.ytmusic = Mock()
+        self.ytmusic.get_history.side_effect = lambda: [dict(song) for song in self.history]
+
         patcher_is_today = patch.object(start_standalone, 'is_today_song', side_effect=lambda x: x == 'Today')
 
         def fake_scrobble_song(inner_self, song, session, timestamp):
-            self.scrobbled.append((song['title'], timestamp))
+            self.scrobbled.append((song.title, timestamp))
             return True
 
         patcher_scrobble = patch.object(scrobble_utils.SmartScrobbler, 'scrobble_song', fake_scrobble_song)
 
-        self.addCleanup(patcher_history.stop)
         self.addCleanup(patcher_is_today.stop)
         self.addCleanup(patcher_scrobble.stop)
-        patcher_history.start()
         patcher_is_today.start()
         patcher_scrobble.start()
 
@@ -62,7 +71,7 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
         store.migrate()
         return start_standalone.ImprovedProcess(
             store,
-            "fake cookie",
+            self.ytmusic,
             to_datetime=datetime.now(),
             dry_run=dry_run
         )
@@ -250,6 +259,21 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertEqual(before_state, after_state)
         self.assertEqual(self.scrobbled, [])  # scrobble_song must never actually be called
+
+    def test_expired_auth_returning_none_history_is_auth_failure(self):
+        """Regression test: with stale browser.json credentials, get_history()
+        returns None without raising. The run must report an AUTH failure,
+        scrobble nothing, and not update last_success_at."""
+        self.ytmusic.get_history.side_effect = None
+        self.ytmusic.get_history.return_value = None
+        process = self.new_process()
+
+        failure = process.execute()
+
+        self.assertEqual(failure, FailureType.AUTH)
+        self.assertEqual(self.scrobbled, [])
+        last_success_at = process.store.conn.execute('SELECT last_success_at FROM run_state').fetchone()[0]
+        self.assertIsNone(last_success_at)
 
 
 if __name__ == '__main__':
