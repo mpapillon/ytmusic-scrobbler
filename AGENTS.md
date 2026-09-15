@@ -17,7 +17,7 @@ pip install -r requirements.txt
 
 1. **YouTube Music credentials (`browser.json`)**: Run the script with `--login` and paste your browser request headers when prompted (nothing is scrobbled, the file is created/refreshed):
    ```bash
-   python start_standalone.py --login
+   python scrobbler.py --login
    ```
    To get the headers:
    - Go to https://music.youtube.com in your browser (signed in)
@@ -39,10 +39,10 @@ pip install -r requirements.txt
 ## Running the Application
 
 ```bash
-python start_standalone.py
-python start_standalone.py --dry-run  # preview, no Last.fm calls or DB writes
-python start_standalone.py --login    # refresh browser.json credentials
-python start_standalone.py --set-last-success "2026-09-10T00:05"  # manual catch-up: write run_state.last_success_at (rejected if future), then run normally
+python scrobbler.py
+python scrobbler.py --dry-run  # preview, no Last.fm calls or DB writes
+python scrobbler.py --login    # refresh browser.json credentials
+python scrobbler.py --set-last-success "2026-09-10T00:05"  # manual catch-up: write run_state.last_success_at (rejected if future), then run normally
 ```
 Designed to run repeatedly via cron at any interval - timing adapts to the real gap between runs.
 
@@ -54,7 +54,7 @@ python -m unittest discover -s tests -t .
 
 ## Code Architecture
 
-- `start_standalone.py`: primary implementation (`ImprovedProcess.execute()`, with an optional `anchor_override` for `--set-last-success` catch-up runs), plus `update_browser_json()` for the `--login` flow
+- `scrobbler.py`: primary implementation (`ImprovedProcess.execute()`, with an optional `anchor_override` for `--set-last-success` catch-up runs), plus `update_browser_json()` for the `--login` flow
 - `scrobble_utils.py`: `HistorySong` (normalizes raw `ytmusicapi.get_history()` entries: first artist, album fallback to title, drops " - Topic" channels), `ScrobbleTimestampCalculator` (fake timestamps), `PositionTracker` (new/replay detection), `SmartScrobbler` (Last.fm API + error categorization)
 - `date_detection.py`: multilingual "Today" detection (50+ languages), applied to the `played` shelf label strings
 - `lastpy/`: custom Last.fm API client (`authorize`, `scrobble`)
@@ -88,7 +88,7 @@ CREATE TABLE run_state (  -- single row, last successful (non-dry-run) run
 
 ## Important Files
 
-- `start_standalone.py`: entry point
+- `scrobbler.py`: entry point
 - `.env`: API keys and session tokens
 - `browser.json`: YouTube Music credentials (gitignored, created by `--login`)
 - `data.db`: SQLite tracking + run state

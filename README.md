@@ -25,13 +25,13 @@ The YouTube Music Last.fm Scrobbler is a Python application that fetches your Yo
 ### Run
 
 ```bash
-python start_standalone.py
+python scrobbler.py
 ```
 
 On first run you need to:
 1. **Create your YouTube Music credentials** once, with the interactive login flow:
    ```bash
-   python start_standalone.py --login
+   python scrobbler.py --login
    ```
 2. **Authenticate with Last.fm** - on the next run, the script opens your browser once and saves `LASTFM_SESSION` to `.env`
 
@@ -51,8 +51,6 @@ On first run you need to:
 
 ## ✨ Features
 
-### 🌟 Standalone Version (`start_standalone.py`)
-
 - **ytmusicapi-based fetching** - History comes from `ytmusicapi.get_history()` (the same API the web player uses), so no fragile HTML parsing
 - **Multilingual support** - Detects "Today" in 50+ languages (English, Spanish, Chinese, Russian, Arabic, etc.)
 - **Smart timestamp distribution** - Logarithmic spread across the time since your last successful run, clamped to the current day. First run ever only calibrates position tracking (nothing is scrobbled).
@@ -62,7 +60,7 @@ On first run you need to:
 
 **⚠️ Considerations:**
 - Credentials are Google session cookies, valid only while your browser session lives
-- Periodically refresh them with `python start_standalone.py --login` (the script tells you when they've expired)
+- Periodically refresh them with `python scrobbler.py --login` (the script tells you when they've expired)
 - Note: ytmusicapi's long-lived OAuth flow is currently broken upstream ([sigma67/ytmusicapi#813](https://github.com/sigma67/ytmusicapi/issues/813)), hence browser-header auth for now
 
 ---
@@ -139,7 +137,7 @@ LASTFM_SESSION=your_session_token
 ## 🐛 Troubleshooting
 
 **❌ "YouTube Music credentials not found: browser.json does not exist"**
-- Run `python start_standalone.py --login` to create it (see Quick Start)
+- Run `python scrobbler.py --login` to create it (see Quick Start)
 
 **❌ "The following entries are missing in your headers: cookie, x-goog-authuser"**
 - You copied headers from the wrong request - pick a `browse` request while signed in
@@ -162,7 +160,7 @@ LASTFM_SESSION=your_session_token
    `browser.json` and `data.db` are resolved relative to the working directory, so `cd` into the project first:
    ```bash
    # e.g. every 15 minutes
-   */15 * * * * cd /path/to/ytmusic-scrobbler && /path/to/python start_standalone.py
+   */15 * * * * cd /path/to/ytmusic-scrobbler && /path/to/python scrobbler.py
    ```
 4. Test with `--dry-run` first to preview what a run would do without side effects
 

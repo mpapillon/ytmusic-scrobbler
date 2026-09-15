@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Standalone YouTube Music Last.fm Scrobbler
+YouTube Music Last.fm Scrobbler
 - YouTube Music history via ytmusicapi (browser.json auth, see README)
 - Multilingual date detection (50+ languages)
 - Smart timestamp distribution (logarithmic, bounded to the real elapsed time since the last successful run)

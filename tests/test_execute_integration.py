@@ -18,7 +18,7 @@ os.environ.setdefault('LAST_FM_API_SECRET', 'dummy')
 os.environ.setdefault('LASTFM_SESSION', 'dummy')
 
 import scrobble_utils
-import start_standalone
+import scrobbler
 from errors import FailureType
 from store import Store
 
@@ -50,7 +50,7 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
         self.ytmusic = Mock()
         self.ytmusic.get_history.side_effect = lambda: [dict(song) for song in self.history]
 
-        patcher_is_today = patch.object(start_standalone, 'is_today_song', side_effect=lambda x: x == 'Today')
+        patcher_is_today = patch.object(scrobbler, 'is_today_song', side_effect=lambda x: x == 'Today')
 
         def fake_scrobble_song(inner_self, song, session, timestamp):
             self.scrobbled.append((song.title, timestamp))
@@ -69,7 +69,7 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
     def new_process(self, dry_run=False):
         store = Store()
         store.migrate()
-        return start_standalone.ImprovedProcess(
+        return scrobbler.ImprovedProcess(
             store,
             self.ytmusic,
             to_datetime=datetime.now(),

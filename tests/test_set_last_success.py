@@ -18,7 +18,7 @@ os.environ.setdefault('LAST_FM_API_SECRET', 'dummy')
 os.environ.setdefault('LASTFM_SESSION', 'dummy')
 
 import scrobble_utils
-import start_standalone
+import scrobbler
 from scrobble_utils import start_of_day
 from store import Store
 
@@ -46,11 +46,11 @@ class TestMainSetLastSuccess(TmpCwdTestCase):
     def run_main(self, *extra_argv):
         mock_process = Mock()
         mock_process.execute.return_value = None
-        with patch.object(start_standalone, 'BROWSER_JSON_PATH', self.browser_path), \
-                patch.object(start_standalone, 'YTMusic'), \
-                patch.object(start_standalone, 'ImprovedProcess', return_value=mock_process) as mock_cls, \
-                patch.object(sys, 'argv', ['start_standalone.py', *extra_argv]):
-            exit_code = start_standalone.main()
+        with patch.object(scrobbler, 'BROWSER_JSON_PATH', self.browser_path), \
+                patch.object(scrobbler, 'YTMusic'), \
+                patch.object(scrobbler, 'ImprovedProcess', return_value=mock_process) as mock_cls, \
+                patch.object(sys, 'argv', ['scrobbler.py', *extra_argv]):
+            exit_code = scrobbler.main()
         return exit_code, mock_cls
 
     def read_anchor(self):
@@ -131,7 +131,7 @@ class TestExecuteAnchorOverride(TmpCwdTestCase):
         self.ytmusic = Mock()
         self.ytmusic.get_history.side_effect = lambda: [dict(song) for song in self.history]
 
-        patcher1 = patch.object(start_standalone, 'is_today_song', side_effect=lambda x: x == 'Today')
+        patcher1 = patch.object(scrobbler, 'is_today_song', side_effect=lambda x: x == 'Today')
 
         def fake_scrobble_song(inner_self, song, session, timestamp):
             self.scrobbled.append((song.title, int(timestamp)))
@@ -146,7 +146,7 @@ class TestExecuteAnchorOverride(TmpCwdTestCase):
     def new_process(self, anchor_override=None, dry_run=False):
         store = Store()
         store.migrate()
-        return start_standalone.ImprovedProcess(
+        return scrobbler.ImprovedProcess(
             store, self.ytmusic, to_datetime=datetime.now(),
             dry_run=dry_run, anchor_override=anchor_override,
         )
