@@ -55,7 +55,7 @@ python -m unittest discover -s tests -t .
 ## Code Architecture
 
 - `scrobbler.py`: primary implementation (`ImprovedProcess.execute()`, with an optional `anchor_override` for `--set-last-success` catch-up runs), plus `update_browser_json()` for the `--login` flow
-- `scrobble_utils.py`: `HistorySong` (normalizes raw `ytmusicapi.get_history()` entries: first artist, album fallback to title, drops " - Topic" channels), `ScrobbleTimestampCalculator` (fake timestamps), `PositionTracker` (new/replay detection), `SmartScrobbler` (Last.fm API + error categorization)
+- `scrobble_utils.py`: `HistorySong` (normalizes raw `ytmusicapi.get_history()` entries: first artist, album fallback to title, drops " - Topic" channels and non-music items like podcasts — identified by the absence of a `MUSIC_VIDEO_TYPE_*` `videoType`), `ScrobbleTimestampCalculator` (fake timestamps), `PositionTracker` (new/replay detection), `SmartScrobbler` (Last.fm API + error categorization)
 - `date_detection.py`: multilingual "Today" detection (50+ languages), applied to the `played` shelf label strings
 - `lastpy/`: custom Last.fm API client (`authorize`, `scrobble`)
 - `ytmusic_fetcher.py`: legacy HTML-scraping fetcher, **no longer imported** (kept for reference only)
@@ -103,4 +103,5 @@ The application processes YouTube Music history by:
 4. Later runs scrobble genuinely new or replayed songs, detected via position tracking.
 5. Fake timestamps spread logarithmically across `[last successful run, now]`, clamped to the start of the current day.
 6. Skips artists ending with "- Topic".
-7. Uses track name as album name when album is missing.
+7. Ignores non-music entries (e.g. podcasts), which lack a `MUSIC_VIDEO_TYPE_*` `videoType`.
+8. Uses track name as album name when album is missing.

@@ -29,6 +29,7 @@ def api_song(title: str, artist: str, album: str) -> dict:
         'title': title,
         'artists': [{'name': artist}],
         'album': {'name': album},
+        'videoType': 'MUSIC_VIDEO_TYPE_ATV',
         'played': 'Today',
     }
 

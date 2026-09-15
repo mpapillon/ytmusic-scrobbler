@@ -1,5 +1,6 @@
 """Unit tests for HistorySong.from_api_item(): normalization of raw ytmusicapi
-get_history() entries, and the drop rules (missing title/artist, ' - Topic' channels)."""
+get_history() entries, and the drop rules (non-music/podcasts via missing
+MUSIC_VIDEO_TYPE videoType, missing title/artist, ' - Topic' channels)."""
 import os
 import sys
 import unittest
@@ -14,6 +15,7 @@ def api_item(**overrides):
         'title': 'Song',
         'artists': [{'name': 'Artist', 'id': 'UCxxx'}],
         'album': {'name': 'Album', 'id': 'MPREb_xxx'},
+        'videoType': 'MUSIC_VIDEO_TYPE_ATV',
         'played': 'Today at 14:32',
     }
     item.update(overrides)
@@ -46,6 +48,15 @@ class TestHistorySongFromApiItem(unittest.TestCase):
     def test_album_without_name_falls_back_to_title(self):
         song = HistorySong.from_api_item(api_item(album={'id': 'MPREb_xxx'}))
         self.assertEqual(song.album, 'Song')
+
+    def test_video_type_absent_is_dropped(self):
+        item = api_item()
+        del item['videoType']
+        self.assertIsNone(HistorySong.from_api_item(item))
+
+    def test_video_type_omv_is_kept(self):
+        song = HistorySong.from_api_item(api_item(videoType='MUSIC_VIDEO_TYPE_OMV'))
+        self.assertIsNotNone(song)
 
     def test_missing_played_becomes_empty_string(self):
         item = api_item()

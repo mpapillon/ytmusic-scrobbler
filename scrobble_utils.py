@@ -36,12 +36,14 @@ class HistorySong:
     @classmethod
     def from_api_item(cls, item: dict[str, Any]) -> 'HistorySong | None':
         """Build from a ytmusicapi get_history() entry. Returns None for entries
-        to drop: missing title/artist, or auto-generated ' - Topic' channels."""
+        to drop: non-music, missing title/artist, or auto-generated ' - Topic' channels."""
         title = item.get('title')
         artists = item.get('artists') or []
         artist = artists[0].get('name') if artists else None
+        video_type = item.get('videoType') or ''
 
-        if not title or not artist or artist.endswith(" - Topic"):
+        if (not title or not artist or artist.endswith(" - Topic")
+                or not video_type.startswith("MUSIC_VIDEO_TYPE_")):
             return None
 
         album = (item.get('album') or {}).get('name') or title

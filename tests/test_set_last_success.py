@@ -156,9 +156,9 @@ class TestExecuteAnchorOverride(TmpCwdTestCase):
         only calibrate. With an override anchored in the past, the backlog
         must actually scrobble."""
         self.history[:] = [{'title': 'Song1', 'artists': [{'name': 'Art1'}],
-                            'album': {'name': 'Alb1'}, 'played': 'Today'},
+                            'album': {'name': 'Alb1'}, 'videoType': 'MUSIC_VIDEO_TYPE_ATV', 'played': 'Today'},
                            {'title': 'Song2', 'artists': [{'name': 'Art2'}],
-                            'album': {'name': 'Alb2'}, 'played': 'Today'}]
+                            'album': {'name': 'Alb2'}, 'videoType': 'MUSIC_VIDEO_TYPE_ATV', 'played': 'Today'}]
         anchor = start_of_day(int(time.time()))
         process = self.new_process(anchor_override=anchor)
 
@@ -176,7 +176,7 @@ class TestExecuteAnchorOverride(TmpCwdTestCase):
 
     def test_dry_run_with_override_writes_nothing(self):
         self.history[:] = [{'title': 'Song1', 'artists': [{'name': 'Art1'}],
-                            'album': {'name': 'Alb1'}, 'played': 'Today'}]
+                            'album': {'name': 'Alb1'}, 'videoType': 'MUSIC_VIDEO_TYPE_ATV', 'played': 'Today'}]
         process = self.new_process(anchor_override=start_of_day(int(time.time())), dry_run=True)
 
         process.execute()
