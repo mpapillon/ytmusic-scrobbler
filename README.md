@@ -2,8 +2,6 @@
 
 The YouTube Music Last.fm Scrobbler is a Python application that fetches your YouTube Music listening history from the last 24 hours and scrobbles it to Last.fm.
 
----
-
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -47,7 +45,66 @@ On first run you need to:
 > which expires the copied headers faster; a private window nobody else uses
 > stays untouched, so the credentials last noticeably longer.
 
----
+### Podman/Docker
+
+The application can run in a container: credentials and state (`.env`, `browser.json`, `data.db`) are simply mounted from the host at runtime.
+
+Build the image:
+
+```bash
+podman build -t ytmusic-scrobbler .
+# Docker: docker build -t ytmusic-scrobbler .
+```
+
+Create your YouTube Music credentials **on the host** first, so `browser.json` exists before mounting it (see Quick Start):
+
+```bash
+python scrobbler.py --login
+```
+
+Always pass your timezone with `TZ` (e.g. `-e TZ=Europe/Paris`). Without it the
+container runs in UTC, and the script's "today" boundaries shift by a few hours,
+which can make it miss or duplicate songs. Set it on every run — do not rely on
+`.env`, since `TZ` must be in the environment before Python starts.
+
+#### Test with a dry run
+
+The simplest option is to mount the whole project directory as `/data`.
+The `.env`, `browser.json` and `data.db` are then picked up automatically:
+
+```bash
+podman run --rm -it \
+  -e TZ=Europe/Paris \
+  -v "$PWD:/data:Z" \
+  ytmusic-scrobbler --dry-run
+```
+
+Or mount only what is needed and inject secrets with `--env-file`:
+
+```bash
+podman run --rm -it \
+  -e TZ=Europe/Paris \
+  --env-file .env \
+  -v "$PWD/browser.json:/data/browser.json:ro,Z" \
+  -v "$PWD/data.db:/data/data.db:Z" \
+  ytmusic-scrobbler --dry-run
+```
+
+> Replace `Europe/Paris` with your own timezone. 
+> Add `:Z` on SELinux systems (Fedora, RHEL), drop it on Docker or macOS.
+
+#### Run for real
+
+Once the dry run looks right, drop `--dry-run`:
+
+```bash
+podman run --rm \
+  -e TZ=Europe/Paris \
+  --env-file .env \
+  -v "$PWD/browser.json:/data/browser.json:ro,Z" \
+  -v "$PWD/data.db:/data/data.db:Z" \
+  ytmusic-scrobbler
+```
 
 ## ✨ Features
 
@@ -63,31 +120,6 @@ On first run you need to:
 - Periodically refresh them with `python scrobbler.py --login` (the script tells you when they've expired)
 - Note: ytmusicapi's long-lived OAuth flow is currently broken upstream ([sigma67/ytmusicapi#813](https://github.com/sigma67/ytmusicapi/issues/813)), hence browser-header auth for now
 
----
-
-## 🗄️ Database Schema
-
-SQLite is used to track scrobbled songs and prevent duplicates:
-
-```sql
-CREATE TABLE scrobbles (
-    id INTEGER PRIMARY KEY,
-    track_name TEXT,
-    artist_name TEXT,
-    album_name TEXT,
-    scrobbled_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    array_position INTEGER,
-    max_array_position INTEGER           -- Tracks highest position
-)
-
-CREATE TABLE run_state (                 -- Single row, last successful run
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    last_success_at INTEGER
-)
-```
-
----
-
 ## 📝 How It Works
 
 1. **Fetches your play history** via `ytmusicapi.get_history()`
@@ -98,7 +130,6 @@ CREATE TABLE run_state (                 -- Single row, last successful run
 6. **Scrobbles to Last.fm** with proper error handling and retry logic
 7. **Updates database** with enhanced tracking information
 
----
 
 ## 🌍 Multilingual Support
 
@@ -111,8 +142,6 @@ The scrobbler automatically detects "Today" in these language families:
 - **Indic**: Hindi, Bengali, Tamil, Telugu, etc.
 - **Southeast Asian**: Thai, Vietnamese, Indonesian, etc.
 - **Others**: Hebrew, Georgian, Armenian, etc.
-
----
 
 ## 🔧 Configuration
 
@@ -132,8 +161,6 @@ LASTFM_SESSION=your_session_token
 | `browser.json`  | YouTube Music credentials (created by `--login`, keep private) |
 | `data.db`       | SQLite tracking database                             |
 
----
-
 ## 🐛 Troubleshooting
 
 **❌ "YouTube Music credentials not found: browser.json does not exist"**
@@ -150,21 +177,16 @@ LASTFM_SESSION=your_session_token
 - Check your YouTube Music language - multilingual detection should work
 - Report unknown date formats to help improve detection
 
----
+## ⏰ Automation
 
-## 📋 Deployment
+You can automate the scrobbler with a cron job or a systemd timer. Any interval works, timing adapts to the real gap between runs.
 
-1. Run locally first to complete Last.fm OAuth and create `browser.json`
-2. Copy `.env` **and `browser.json`** to the server (both contain secrets - keep them private)
-3. Set up cron job at any interval you like - timing adapts to the real gap between runs.
-   `browser.json` and `data.db` are resolved relative to the working directory, so `cd` into the project first:
-   ```bash
-   # e.g. every 15 minutes
-   */15 * * * * cd /path/to/ytmusic-scrobbler && /path/to/python scrobbler.py
-   ```
-4. Test with `--dry-run` first to preview what a run would do without side effects
+```bash
+# cron example, every 15 minutes
+*/15 * * * * cd /path/to/ytmusic-scrobbler && /path/to/python scrobbler.py
+```
 
----
+Test with `--dry-run` first to preview a run without committing to Last.fm.
 
 ## 🤝 Contributing
 
@@ -176,13 +198,9 @@ Contributions are welcome!
 4. Push to branch: `git push origin feature/amazing-feature`
 5. Open a Pull Request
 
----
-
 ## 📄 License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more information.
-
----
 
 ## 🎵 Enjoy Your Scrobbles!
 
