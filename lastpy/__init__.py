@@ -37,7 +37,6 @@ def get_session(user_token: str) -> str:
     requestHash = hashRequest(params, secret)
     params['api_sig'] = requestHash
     apiResp = requests.post(api_head, params, timeout=30)
-    _raise_if_error(apiResp.text, "auth.getSession")
     return apiResp.text
 
 

@@ -18,6 +18,8 @@ Containerfile*
 .containerignore
 .dockerignore
 
+deploy/
+
 .env
 browser.json
 data.db
