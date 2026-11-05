@@ -2,7 +2,6 @@
 """
 YouTube Music Last.fm Scrobbler
 - YouTube Music history via ytmusicapi (browser.json auth, see README)
-- Multilingual date detection (50+ languages)
 - Smart timestamp distribution (logarithmic, bounded to the real elapsed time since the last successful run)
 - Better position tracking and re-reproduction detection
 - Robust error handling and categorization
@@ -23,11 +22,6 @@ from ytmusicapi import YTMusic, setup
 from ytmusicapi.exceptions import YTMusicUserError
 
 import lastpy
-from date_detection import (
-    get_detected_languages,
-    get_unknown_date_values,
-    is_today_song,
-)
 from errors import ConfigError, FailureType, LastFmError
 from scrobble_utils import (
     HistorySong,
@@ -205,23 +199,7 @@ class ImprovedProcess:
 
         print()
         log_info("Filtering songs played today...")
-        today_songs = [song for song in history if is_today_song(song.played)]
-
-        # Log unknown date values for future expansion
-        played_values = [song.played for song in history]
-        unknown_values = get_unknown_date_values(played_values)
-        if unknown_values:
-            log_warning(
-                f"Unknown date formats detected: {', '.join(unknown_values)} "
-                f"(please report these to the developer)"
-            )
-
-        # Log detected languages
-        detected_languages = get_detected_languages(played_values)
-        if detected_languages:
-            log_info(
-                f"Detected languages in today's songs: {', '.join(detected_languages)}"
-            )
+        today_songs = [song for song in history if song.was_played_today()]
 
         log_info(f"Found {len(today_songs)} songs played today")
 

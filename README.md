@@ -1,4 +1,4 @@
-# YOUTUBE MUSIC LAST.FM SCROBBLER
+# YouTube Music Last.fm Scrobbler
 
 The YouTube Music Last.fm Scrobbler is a Python application that fetches your YouTube Music listening history from the last 24 hours and scrobbles it to Last.fm.
 
@@ -35,14 +35,14 @@ On first run you need to:
 
 **To get your YouTube Music request headers** (pasted when `--login` prompts you):
 1. Open a **private/incognito window**, go to [https://music.youtube.com](https://music.youtube.com) and sign in there
-2. Open Developer Tools (F12) → Network tab  
+2. Open Developer Tools (F12) > Network tab
 3. Refresh the page and select any `browse` request to `music.youtube.com`
 4. Copy the complete **Request Headers** (they must include `cookie`, `authorization` and `x-goog-authuser`)
-5. Paste into the terminal, press Enter then Ctrl-D — this creates `browser.json`
+5. Paste into the terminal, press Enter then Ctrl-D. This creates `browser.json`
 
 > **Tip:** sign in in a dedicated private window rather than your daily browser
 > profile. Your regular sessions keep rotating their token cookies (`*PSIDTS`),
-> which expires the copied headers faster; a private window nobody else uses
+> which expires the copied headers faster. A private window nobody else uses
 > stays untouched, so the credentials last noticeably longer.
 
 ### Podman/Docker
@@ -109,7 +109,6 @@ podman run --rm \
 ## ✨ Features
 
 - **ytmusicapi-based fetching** - History comes from `ytmusicapi.get_history()` (the same API the web player uses), so no fragile HTML parsing
-- **Multilingual support** - Detects "Today" in 50+ languages (English, Spanish, Chinese, Russian, Arabic, etc.)
 - **Smart timestamp distribution** - Logarithmic spread across the time since your last successful run, clamped to the current day. First run ever only calibrates position tracking (nothing is scrobbled).
 - **Better duplicate detection** - Tracks re-reproductions and position changes
 - **Robust error handling** - Categorizes and handles different error types
@@ -122,26 +121,13 @@ podman run --rm \
 
 ## 📝 How It Works
 
-1. **Fetches your play history** via `ytmusicapi.get_history()`
-2. **Detects today's songs** using multilingual date detection on the history shelf labels (50+ languages)
+1. **Fetches your play history**
+2. **Detects today's songs**
 3. **First run ever**: records today's songs as a position-tracking baseline, scrobbles nothing
 4. **Later runs**: smart position tracking identifies new songs and re-reproductions
 5. **Calculates timestamps**: logarithmic spread across the time since your last successful run, clamped to today
 6. **Scrobbles to Last.fm** with proper error handling and retry logic
 7. **Updates database** with enhanced tracking information
-
-
-## 🌍 Multilingual Support
-
-The scrobbler automatically detects "Today" in these language families:
-
-- **Latin**: English, Spanish, Portuguese, Italian, French, German, Dutch, etc.
-- **Cyrillic**: Russian, Ukrainian, Bulgarian, Serbian, etc.
-- **Arabic**: Arabic, Persian, Urdu
-- **CJK**: Chinese (Simplified/Traditional), Japanese, Korean
-- **Indic**: Hindi, Bengali, Tamil, Telugu, etc.
-- **Southeast Asian**: Thai, Vietnamese, Indonesian, etc.
-- **Others**: Hebrew, Georgian, Armenian, etc.
 
 ## 🔧 Configuration
 
@@ -173,10 +159,6 @@ LASTFM_SESSION=your_session_token
 - Your `browser.json` credentials have expired - refresh them with `--login`
 - Sessions typically last days to weeks while you stay logged in in the browser
 
-**❌ "No songs played today"**
-- Check your YouTube Music language - multilingual detection should work
-- Report unknown date formats to help improve detection
-
 ## ⏰ Automation
 
 You can automate the scrobbler with a cron job or a systemd timer. Any interval works, timing adapts to the real gap between runs.
@@ -204,4 +186,4 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 ## 🎵 Enjoy Your Scrobbles!
 
-Scrobble your Youtube Music listening history with last.fm: reliability, multilingual support, and smart smart timestamp handling. 🎶
+Scrobble your Youtube Music listening history with last.fm: reliability, and smart smart timestamp handling. 🎶

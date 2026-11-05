@@ -144,10 +144,6 @@ class TestExecuteAnchorOverride(TmpCwdTestCase):
             dict(song) for song in self.history
         ]
 
-        patcher1 = patch.object(
-            scrobbler, "is_today_song", side_effect=lambda x: x == "Today"
-        )
-
         def fake_scrobble_song(inner_self, song, session, timestamp):
             self.scrobbled.append((song.title, int(timestamp)))
             return True
@@ -155,9 +151,7 @@ class TestExecuteAnchorOverride(TmpCwdTestCase):
         patcher2 = patch.object(
             scrobble_utils.SmartScrobbler, "scrobble_song", fake_scrobble_song
         )
-        self.addCleanup(patcher1.stop)
         self.addCleanup(patcher2.stop)
-        patcher1.start()
         patcher2.start()
 
     def new_process(self, anchor_override=None, dry_run=False):

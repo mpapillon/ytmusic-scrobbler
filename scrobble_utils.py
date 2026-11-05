@@ -56,6 +56,9 @@ class HistorySong:
             title=title, artist=artist, album=album, played=item.get("played") or ""
         )
 
+    def was_played_today(self) -> bool:
+        return self.played.lower() == "today"
+
 
 class SongToScrobble(TypedDict):
     song: HistorySong

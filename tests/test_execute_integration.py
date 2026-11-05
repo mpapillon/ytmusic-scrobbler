@@ -7,7 +7,6 @@ import os
 import sqlite3
 import sys
 import tempfile
-import time
 import unittest
 from datetime import datetime
 from unittest.mock import Mock, patch
@@ -54,10 +53,6 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
             dict(song) for song in self.history
         ]
 
-        patcher_is_today = patch.object(
-            scrobbler, "is_today_song", side_effect=lambda x: x == "Today"
-        )
-
         def fake_scrobble_song(inner_self, song, session, timestamp):
             self.scrobbled.append((song.title, timestamp))
             return True
@@ -66,19 +61,20 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
             scrobble_utils.SmartScrobbler, "scrobble_song", fake_scrobble_song
         )
 
-        self.addCleanup(patcher_is_today.stop)
         self.addCleanup(patcher_scrobble.stop)
-        patcher_is_today.start()
         patcher_scrobble.start()
 
         self.addCleanup(os.chdir, self._orig_cwd)
         self.addCleanup(self.tmpdir.cleanup)
 
-    def new_process(self, dry_run=False):
+    def new_process(self, dry_run=False, to_datetime=None):
         store = Store()
         store.migrate()
         return scrobbler.ImprovedProcess(
-            store, self.ytmusic, to_datetime=datetime.now(), dry_run=dry_run
+            store,
+            self.ytmusic,
+            to_datetime=to_datetime or datetime.now(),
+            dry_run=dry_run,
         )
 
     def test_initial_run_is_calibration_only(self):
@@ -189,11 +185,15 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
         happens: with a same-day last_success_at, the guessed window must start
         there - not fall back to midnight, which would spread a short real gap
         across the whole elapsed day instead of the real, much shorter one."""
+        # Anchor the run to a fixed noon: a wall-clock "two hours ago" falls on
+        # *yesterday* between 00:00 and 02:00, which would legitimately put the
+        # next run back into first-time calibration mode and test nothing.
+        noon = datetime.now().replace(hour=12, minute=0, second=0, microsecond=0)
         self.history[:] = [SONG_1]
-        process = self.new_process()
+        process = self.new_process(to_datetime=noon)
         process.execute()  # calibration on "day 1"
 
-        two_hours_ago = int(time.time()) - 2 * 3600
+        two_hours_ago = int(noon.timestamp()) - 2 * 3600
         process.store.conn.execute(
             "UPDATE run_state SET last_success_at = ?", (two_hours_ago,)
         )
