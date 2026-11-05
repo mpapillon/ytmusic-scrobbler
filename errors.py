@@ -10,10 +10,10 @@ class FailureType(Enum):
     def __init__(self, label: str, exit_code: int):
         self.exit_code = exit_code
 
-    AUTH = ("AUTH", 77)        # EX_NOPERM
+    AUTH = ("AUTH", 77)  # EX_NOPERM
     NETWORK = ("NETWORK", 75)  # EX_TEMPFAIL
     TEMPORARY = ("TEMPORARY", 75)  # EX_TEMPFAIL
-    LASTFM = ("LASTFM", 75)    # EX_TEMPFAIL
+    LASTFM = ("LASTFM", 75)  # EX_TEMPFAIL
     UNKNOWN = ("UNKNOWN", 70)  # EX_SOFTWARE
 
 

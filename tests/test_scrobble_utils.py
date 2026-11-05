@@ -1,4 +1,5 @@
 """Unit tests for scrobble_utils.py: position tracking, timestamp windowing/distribution."""
+
 import os
 import sys
 import unittest
@@ -13,9 +14,9 @@ from scrobble_utils import (
 )
 from store import Scrobble
 
-SONG_A = HistorySong('Song A', 'Artist A', 'Album A', played='Today')
-SONG_B = HistorySong('Song B', 'Artist B', 'Album B', played='Today')
-SONG_C = HistorySong('Song C', 'Artist C', 'Album C', played='Today')
+SONG_A = HistorySong("Song A", "Artist A", "Album A", played="Today")
+SONG_B = HistorySong("Song B", "Artist B", "Album B", played="Today")
+SONG_C = HistorySong("Song C", "Artist C", "Album C", played="Today")
 
 
 def db_entry(song: HistorySong, array_position: int) -> Scrobble:
@@ -38,9 +39,9 @@ class TestDetectSongsToScrobbleCalibration(unittest.TestCase):
 
         self.assertEqual(len(result), 3)
         for i, item in enumerate(result):
-            self.assertEqual(item['reason'], 'calibration')
-            self.assertFalse(item['should_scrobble'])
-            self.assertEqual(item['position'], i + 1)
+            self.assertEqual(item["reason"], "calibration")
+            self.assertFalse(item["should_scrobble"])
+            self.assertEqual(item["position"], i + 1)
 
 
 class TestDetectSongsToScrobbleNominal(unittest.TestCase):
@@ -48,55 +49,71 @@ class TestDetectSongsToScrobbleNominal(unittest.TestCase):
 
     def test_new_song_is_scrobbled(self):
         today = [SONG_A]
-        result = PositionTracker.detect_songs_to_scrobble(today, [], is_first_time=False)
+        result = PositionTracker.detect_songs_to_scrobble(
+            today, [], is_first_time=False
+        )
 
-        self.assertEqual(result[0]['reason'], 'new_song')
-        self.assertTrue(result[0]['should_scrobble'])
+        self.assertEqual(result[0]["reason"], "new_song")
+        self.assertTrue(result[0]["should_scrobble"])
 
     def test_song_moved_to_better_position_is_reproduction(self):
         # SONG_B was previously seen at position 3, now it's back at position 1
         today = [SONG_B]
         database_songs = [db_entry(SONG_B, 3)]
-        result = PositionTracker.detect_songs_to_scrobble(today, database_songs, is_first_time=False)
+        result = PositionTracker.detect_songs_to_scrobble(
+            today, database_songs, is_first_time=False
+        )
 
-        self.assertEqual(result[0]['reason'], 'reproduction')
-        self.assertTrue(result[0]['should_scrobble'])
-        self.assertEqual(result[0].get('previous_position'), 3)
+        self.assertEqual(result[0]["reason"], "reproduction")
+        self.assertTrue(result[0]["should_scrobble"])
+        self.assertEqual(result[0].get("previous_position"), 3)
 
     def test_song_same_or_worse_position_is_not_scrobbled(self):
         # SONG_B was at position 1, still at position 1 - no new play
         today = [SONG_A, SONG_B]
         database_songs = [db_entry(SONG_B, 2)]
-        result = PositionTracker.detect_songs_to_scrobble(today, database_songs, is_first_time=False)
+        result = PositionTracker.detect_songs_to_scrobble(
+            today, database_songs, is_first_time=False
+        )
 
-        b_item = next(r for r in result if r['song'] == SONG_B)
-        self.assertEqual(b_item['reason'], 'position_update')
-        self.assertFalse(b_item['should_scrobble'])
+        b_item = next(r for r in result if r["song"] == SONG_B)
+        self.assertEqual(b_item["reason"], "position_update")
+        self.assertFalse(b_item["should_scrobble"])
 
     def test_same_title_different_artist_is_not_a_match(self):
-        same_title_other_artist = HistorySong('Song A', 'Someone Else', 'Other Album', played='Today')
+        same_title_other_artist = HistorySong(
+            "Song A", "Someone Else", "Other Album", played="Today"
+        )
         today = [same_title_other_artist]
         database_songs = [db_entry(SONG_A, 1)]
-        result = PositionTracker.detect_songs_to_scrobble(today, database_songs, is_first_time=False)
+        result = PositionTracker.detect_songs_to_scrobble(
+            today, database_songs, is_first_time=False
+        )
 
         # Must not be matched against SONG_A's stale entry - it's a different song
-        self.assertEqual(result[0]['reason'], 'new_song')
-        self.assertTrue(result[0]['should_scrobble'])
+        self.assertEqual(result[0]["reason"], "new_song")
+        self.assertTrue(result[0]["should_scrobble"])
 
     def test_same_title_and_artist_different_album_is_not_a_match(self):
-        same_title_artist_other_album = HistorySong('Song A', 'Artist A', 'Live Version', played='Today')
+        same_title_artist_other_album = HistorySong(
+            "Song A", "Artist A", "Live Version", played="Today"
+        )
         today = [same_title_artist_other_album]
         database_songs = [db_entry(SONG_A, 1)]
-        result = PositionTracker.detect_songs_to_scrobble(today, database_songs, is_first_time=False)
+        result = PositionTracker.detect_songs_to_scrobble(
+            today, database_songs, is_first_time=False
+        )
 
-        self.assertEqual(result[0]['reason'], 'new_song')
-        self.assertTrue(result[0]['should_scrobble'])
+        self.assertEqual(result[0]["reason"], "new_song")
+        self.assertTrue(result[0]["should_scrobble"])
 
 
 class TestScrobbleTimestampCalculatorSingleSong(unittest.TestCase):
     def test_single_song_is_placed_30s_before_window_end(self):
         window_end = 1_700_000_000
-        ts = ScrobbleTimestampCalculator.calculate_scrobble_timestamp(0, 1, window_end - 3600, window_end)
+        ts = ScrobbleTimestampCalculator.calculate_scrobble_timestamp(
+            0, 1, window_end - 3600, window_end
+        )
         self.assertEqual(ts, str(window_end - 30))
 
 
@@ -109,7 +126,12 @@ class TestScrobbleTimestampCalculatorFewHoursCatchUp(unittest.TestCase):
         total = 5
 
         offsets = [
-            window_end - int(ScrobbleTimestampCalculator.calculate_scrobble_timestamp(i, total, window_start, window_end))
+            window_end
+            - int(
+                ScrobbleTimestampCalculator.calculate_scrobble_timestamp(
+                    i, total, window_start, window_end
+                )
+            )
             for i in range(total)
         ]
 
@@ -127,21 +149,29 @@ class TestScrobbleTimestampCalculatorEdgeCases(unittest.TestCase):
     def test_zero_span_window_places_everything_at_window_end(self):
         now = 1_700_000_000
         for i in range(3):
-            ts = ScrobbleTimestampCalculator.calculate_scrobble_timestamp(i, 3, now, now)
+            ts = ScrobbleTimestampCalculator.calculate_scrobble_timestamp(
+                i, 3, now, now
+            )
             self.assertEqual(ts, str(now))
 
     def test_min_offset_guard_on_very_short_window(self):
         # 10s window - the usual 30s "minimum offset" must not exceed the span
         window_end = 1_700_000_000
         window_start = window_end - 10
-        ts = ScrobbleTimestampCalculator.calculate_scrobble_timestamp(0, 2, window_start, window_end)
-        self.assertEqual(ts, str(window_start))  # clamped to the span, not -30s past window_start
+        ts = ScrobbleTimestampCalculator.calculate_scrobble_timestamp(
+            0, 2, window_start, window_end
+        )
+        self.assertEqual(
+            ts, str(window_start)
+        )  # clamped to the span, not -30s past window_start
 
     def test_negative_span_from_clock_skew_does_not_crash(self):
         # last_success_at in the future relative to window_end (clock skew) -> window_start > window_end
         window_end = 1_700_000_000
         window_start = window_end + 3600
-        ts = ScrobbleTimestampCalculator.calculate_scrobble_timestamp(0, 2, window_start, window_end)
+        ts = ScrobbleTimestampCalculator.calculate_scrobble_timestamp(
+            0, 2, window_start, window_end
+        )
         self.assertEqual(ts, str(window_end))  # span clamped to 0, no negative offset
 
 
@@ -149,9 +179,12 @@ class TestComputeScrobbleWindow(unittest.TestCase):
     def setUp(self):
         # Fixed "now": 2026-08-11 15:00:00 local time
         import datetime
+
         self.now_dt = datetime.datetime(2026, 8, 11, 15, 0, 0)
         self.now = int(self.now_dt.timestamp())
-        self.start_of_today = int(self.now_dt.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+        self.start_of_today = int(
+            self.now_dt.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        )
 
     def test_no_prior_run_falls_back_to_start_of_today(self):
         window_start, window_end = compute_scrobble_window(None, self.now)
@@ -183,5 +216,5 @@ class TestComputeScrobbleWindow(unittest.TestCase):
         self.assertEqual(window_start, last_success_at)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

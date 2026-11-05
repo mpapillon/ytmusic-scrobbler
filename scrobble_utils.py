@@ -2,6 +2,7 @@
 Smart scrobbling utilities with improved timestamp distribution and error handling
 Based on ytmusic-scrobbler-web worker implementation
 """
+
 import hashlib
 import math
 import sys
@@ -26,6 +27,7 @@ def log_warning(message: str) -> None:
 def log_error(message: str) -> None:
     print(f"Error: {message}", file=sys.stderr)
 
+
 @dataclass(frozen=True, slots=True)
 class HistorySong:
     title: str
@@ -34,33 +36,42 @@ class HistorySong:
     played: str
 
     @classmethod
-    def from_api_item(cls, item: dict[str, Any]) -> 'HistorySong | None':
+    def from_api_item(cls, item: dict[str, Any]) -> "HistorySong | None":
         """Build from a ytmusicapi get_history() entry. Returns None for entries
         to drop: non-music, missing title/artist, or auto-generated ' - Topic' channels."""
-        title = item.get('title')
-        artists = item.get('artists') or []
-        artist = artists[0].get('name') if artists else None
-        video_type = item.get('videoType') or ''
+        title = item.get("title")
+        artists = item.get("artists") or []
+        artist = artists[0].get("name") if artists else None
+        video_type = item.get("videoType") or ""
 
-        if (not title or not artist or artist.endswith(" - Topic")
-                or not video_type.startswith("MUSIC_VIDEO_TYPE_")):
+        if (
+            not title
+            or not artist
+            or artist.endswith(" - Topic")
+            or not video_type.startswith("MUSIC_VIDEO_TYPE_")
+        ):
             return None
 
-        album = (item.get('album') or {}).get('name') or title
-        return cls(title=title, artist=artist, album=album, played=item.get('played') or '')
+        album = (item.get("album") or {}).get("name") or title
+        return cls(
+            title=title, artist=artist, album=album, played=item.get("played") or ""
+        )
 
 
 class SongToScrobble(TypedDict):
     song: HistorySong
     position: int
-    reason: Literal['calibration', 'new_song', 'reproduction', 'position_update']
+    reason: Literal["calibration", "new_song", "reproduction", "position_update"]
     should_scrobble: bool
     previous_position: NotRequired[int | None]
+
 
 def start_of_day(now: int) -> int:
     """Midnight (local time) of the calendar day containing `now`."""
     return int(
-        datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        datetime.fromtimestamp(now)
+        .replace(hour=0, minute=0, second=0, microsecond=0)
+        .timestamp()
     )
 
 
@@ -75,7 +86,11 @@ def compute_scrobble_window(last_success_at: int | None, now: int) -> tuple[int,
     today (there's no reliable timestamp for anything YouTube Music files under
     "Yesterday" or older).
     """
-    window_start = max(last_success_at, start_of_day(now)) if last_success_at else start_of_day(now)
+    window_start = (
+        max(last_success_at, start_of_day(now))
+        if last_success_at
+        else start_of_day(now)
+    )
     return window_start, now
 
 
@@ -87,7 +102,7 @@ class ScrobbleTimestampCalculator:
         songs_scrobbled_so_far: int,
         total_songs_to_scrobble: int,
         window_start: int,
-        window_end: int
+        window_end: int,
     ) -> str:
         """
         Calculate timestamp for scrobbling, distributing songs logarithmically across
@@ -131,31 +146,55 @@ class ErrorCategorizer:
         error_message = str(error)
 
         # Authentication errors
-        if any(keyword in error_message for keyword in [
-            "401", "UNAUTHENTICATED", "authentication credential",
-            "Headers.append", "invalid header value", "__Secure-3PAPISID"
-        ]):
+        if any(
+            keyword in error_message
+            for keyword in [
+                "401",
+                "UNAUTHENTICATED",
+                "authentication credential",
+                "Headers.append",
+                "invalid header value",
+                "__Secure-3PAPISID",
+            ]
+        ):
             return FailureType.AUTH
 
         # Temporary service errors (503, 502, 429, rate limits)
-        if any(keyword in error_message for keyword in [
-            "503", "Service Unavailable", "502", "Bad Gateway",
-            "429", "Too Many Requests", "rate limit",
-            "temporarily unavailable", "try again later"
-        ]):
+        if any(
+            keyword in error_message
+            for keyword in [
+                "503",
+                "Service Unavailable",
+                "502",
+                "Bad Gateway",
+                "429",
+                "Too Many Requests",
+                "rate limit",
+                "temporarily unavailable",
+                "try again later",
+            ]
+        ):
             return FailureType.TEMPORARY
 
         # Network/YouTube Music errors
-        if any(keyword in error_message for keyword in [
-            "Failed to fetch", "network", "timeout",
-            "ECONNRESET", "ENOTFOUND", "ConnectionError"
-        ]):
+        if any(
+            keyword in error_message
+            for keyword in [
+                "Failed to fetch",
+                "network",
+                "timeout",
+                "ECONNRESET",
+                "ENOTFOUND",
+                "ConnectionError",
+            ]
+        ):
             return FailureType.NETWORK
 
         # Last.fm specific errors
-        if any(keyword in error_message for keyword in [
-            "audioscrobbler", "last.fm", "scrobble"
-        ]):
+        if any(
+            keyword in error_message
+            for keyword in ["audioscrobbler", "last.fm", "scrobble"]
+        ):
             return FailureType.LASTFM
 
         return FailureType.UNKNOWN
@@ -175,24 +214,25 @@ class SmartScrobbler:
         """Sanitize string for Last.fm API"""
         # Decode Unicode escape sequences
         import re
-        s = re.sub(r'\\u([0-9A-Fa-f]{4})', lambda m: chr(int(m.group(1), 16)), s)
+
+        s = re.sub(r"\\u([0-9A-Fa-f]{4})", lambda m: chr(int(m.group(1), 16)), s)
 
         # Replace specific Unicode characters
         replacements = {
-            '\u2026': '...',  # ellipsis
-            '\u2013': '-',    # en dash
-            '\u2014': '-',    # em dash
-            '\u2018': "'",    # left single quotation mark
-            '\u2019': "'",    # right single quotation mark
-            '\u201C': '"',    # left double quotation mark
-            '\u201D': '"',    # right double quotation mark
+            "\u2026": "...",  # ellipsis
+            "\u2013": "-",  # en dash
+            "\u2014": "-",  # em dash
+            "\u2018": "'",  # left single quotation mark
+            "\u2019": "'",  # right single quotation mark
+            "\u201c": '"',  # left double quotation mark
+            "\u201d": '"',  # right double quotation mark
         }
 
         for old, new in replacements.items():
             s = s.replace(old, new)
 
         # Remove control characters and invalid Unicode
-        s = re.sub(r'[\u0000-\u001F\u007F\uFFFE\uFFFF]', '', s)
+        s = re.sub(r"[\u0000-\u001F\u007F\uFFFE\uFFFF]", "", s)
 
         return s
 
@@ -202,13 +242,10 @@ class SmartScrobbler:
         for key in sorted(params.keys()):
             string += key + params[key]
         string += self.last_fm_api_secret
-        return hashlib.md5(string.encode('utf-8')).hexdigest()
+        return hashlib.md5(string.encode("utf-8")).hexdigest()
 
     def scrobble_song(
-        self,
-        song: HistorySong,
-        last_fm_session_key: str,
-        timestamp: str
+        self, song: HistorySong, last_fm_session_key: str, timestamp: str
     ) -> bool:
         """
         Scrobble a single song to Last.fm
@@ -222,13 +259,13 @@ class SmartScrobbler:
             True if scrobble was successful, False otherwise
         """
         params = {
-            'album': self._sanitize_string(song.album),
-            'api_key': self.last_fm_api_key,
-            'method': 'track.scrobble',
-            'timestamp': timestamp,
-            'track': self._sanitize_string(song.title),
-            'artist': self._sanitize_string(song.artist),
-            'sk': last_fm_session_key,
+            "album": self._sanitize_string(song.album),
+            "api_key": self.last_fm_api_key,
+            "method": "track.scrobble",
+            "timestamp": timestamp,
+            "track": self._sanitize_string(song.title),
+            "artist": self._sanitize_string(song.artist),
+            "sk": last_fm_session_key,
         }
 
         # Create API signature
@@ -236,51 +273,57 @@ class SmartScrobbler:
 
         # Use lastpy for scrobbling (assuming it's available)
         xml_response = lastpy.scrobble(
-            params['track'],
-            params['artist'],
-            params['album'],
+            params["track"],
+            params["artist"],
+            params["album"],
             last_fm_session_key,
-            timestamp
+            timestamp,
         )
 
         # Parse XML response
         root = ET.fromstring(xml_response)
-        scrobbles = root.find('scrobbles')
+        scrobbles = root.find("scrobbles")
 
         if scrobbles is not None:
-            accepted = scrobbles.get('accepted', '0')
-            ignored = scrobbles.get('ignored', '0')
+            accepted = scrobbles.get("accepted", "0")
+            ignored = scrobbles.get("ignored", "0")
 
-            scrobble_elements = scrobbles.findall('scrobble')
+            scrobble_elements = scrobbles.findall("scrobble")
             for scrobble in scrobble_elements:
-                track_elem = scrobble.find('track')
-                artist_elem = scrobble.find('artist')
-                ignored_message = scrobble.find('ignoredMessage')
+                track_elem = scrobble.find("track")
+                artist_elem = scrobble.find("artist")
+                ignored_message = scrobble.find("ignoredMessage")
 
-                track_corrected = track_elem.get('corrected', '0') if track_elem is not None else '0'
-                artist_corrected = artist_elem.get('corrected', '0') if artist_elem is not None else '0'
+                track_corrected = (
+                    track_elem.get("corrected", "0") if track_elem is not None else "0"
+                )
+                artist_corrected = (
+                    artist_elem.get("corrected", "0")
+                    if artist_elem is not None
+                    else "0"
+                )
 
-                if track_corrected != '0' or artist_corrected != '0':
+                if track_corrected != "0" or artist_corrected != "0":
                     log_warning(
                         f'Last.fm corrected "{song.title}" by {song.artist} -> '
                         f'"{track_elem.text}" by "{artist_elem.text}"'
                     )
 
                 if ignored_message is not None and ignored_message.text:
-                    log_warning(f'Last.fm ignored "{song.title}" by {song.artist}: {ignored_message.text}')
+                    log_warning(
+                        f'Last.fm ignored "{song.title}" by {song.artist}: {ignored_message.text}'
+                    )
 
             # Return True if at least one scrobble was accepted (keeping original logic)
-            return accepted != '0' or ignored == '0'
+            return accepted != "0" or ignored == "0"
 
-        log_warning(f'Unexpected Last.fm response for "{song.title}" by {song.artist}: no scrobbles element')
+        log_warning(
+            f'Unexpected Last.fm response for "{song.title}" by {song.artist}: no scrobbles element'
+        )
         return False
 
     def calculate_timestamp(
-        self,
-        position: int,
-        total: int,
-        window_start: int,
-        window_end: int
+        self, position: int, total: int, window_start: int, window_end: int
     ) -> str:
         """Calculate timestamp for scrobbling at given position"""
         return self.timestamp_calculator.calculate_scrobble_timestamp(
@@ -302,7 +345,7 @@ class PositionTracker:
     def detect_songs_to_scrobble(
         today_songs: list[HistorySong],
         database_scrobbles: list[Scrobble],
-        is_first_time: bool = False
+        is_first_time: bool = False,
     ) -> list[SongToScrobble]:
         """
         Determine which songs should be scrobbled based on position tracking
@@ -322,12 +365,14 @@ class PositionTracker:
         if is_first_time:
             # First run ever: record today's songs as a baseline, scrobble nothing
             for i, song in enumerate(today_songs):
-                songs_to_scrobble.append({
-                    'song': song,
-                    'position': i + 1,
-                    'reason': 'calibration',
-                    'should_scrobble': False
-                })
+                songs_to_scrobble.append(
+                    {
+                        "song": song,
+                        "position": i + 1,
+                        "reason": "calibration",
+                        "should_scrobble": False,
+                    }
+                )
         else:
             # Regular processing: check for new songs and re-reproductions
             for i, song in enumerate(today_songs):
@@ -336,36 +381,44 @@ class PositionTracker:
                 # Find matching song in database
                 saved_scrobble: Scrobble | None = None
                 for db_scrobble in database_scrobbles:
-                    if (db_scrobble.track_name == song.title and
-                        db_scrobble.artist_name == song.artist and
-                        db_scrobble.album_name == song.album):
+                    if (
+                        db_scrobble.track_name == song.title
+                        and db_scrobble.artist_name == song.artist
+                        and db_scrobble.album_name == song.album
+                    ):
                         saved_scrobble = db_scrobble
                         break
 
                 if not saved_scrobble:
                     # New song - scrobble it
-                    songs_to_scrobble.append({
-                        'song': song,
-                        'position': current_position,
-                        'reason': 'new_song',
-                        'should_scrobble': True
-                    })
-                elif current_position < (saved_scrobble.array_position or int('inf')):
+                    songs_to_scrobble.append(
+                        {
+                            "song": song,
+                            "position": current_position,
+                            "reason": "new_song",
+                            "should_scrobble": True,
+                        }
+                    )
+                elif current_position < (saved_scrobble.array_position or int("inf")):
                     # Re-reproduction - song moved up in the list (better position than previous session)
-                    songs_to_scrobble.append({
-                        'song': song,
-                        'position': current_position,
-                        'reason': 'reproduction',
-                        'should_scrobble': True,
-                        'previous_position': saved_scrobble.array_position
-                    })
+                    songs_to_scrobble.append(
+                        {
+                            "song": song,
+                            "position": current_position,
+                            "reason": "reproduction",
+                            "should_scrobble": True,
+                            "previous_position": saved_scrobble.array_position,
+                        }
+                    )
                 else:
                     # Song exists and hasn't moved up - just update position
-                    songs_to_scrobble.append({
-                        'song': song,
-                        'position': current_position,
-                        'reason': 'position_update',
-                        'should_scrobble': False
-                    })
+                    songs_to_scrobble.append(
+                        {
+                            "song": song,
+                            "position": current_position,
+                            "reason": "position_update",
+                            "should_scrobble": False,
+                        }
+                    )
 
         return songs_to_scrobble

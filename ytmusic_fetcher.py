@@ -3,6 +3,7 @@ YouTube Music History Fetcher
 Direct HTML page scraping approach (no YTMusic API dependency)
 Based on ytmusic-scrobbler-web worker implementation
 """
+
 import hashlib
 import json
 import re
@@ -33,8 +34,8 @@ class YTMusicFetcher:
     def _sanitize_cookie_for_http(self, cookie: str) -> str:
         """Remove invalid Unicode characters that can't be used in HTTP headers"""
         # Remove Unicode characters > 255 and normalize whitespace
-        sanitized = re.sub(r'[\u0100-\uFFFF]', '', cookie)
-        sanitized = re.sub(r'\s+', ' ', sanitized)
+        sanitized = re.sub(r"[\u0100-\uFFFF]", "", cookie)
+        sanitized = re.sub(r"\s+", " ", sanitized)
         return sanitized.strip()
 
     def _process_cookie_for_request(self, cookie: str) -> str:
@@ -86,12 +87,12 @@ class YTMusicFetcher:
                     "content-type": "application/json",
                     "origin": "https://music.youtube.com",
                 },
-                timeout=10
+                timeout=10,
             )
 
             if response.ok:
                 text = response.text
-                matches = re.search(r'ytcfg\.set\s*\(\s*({.+?})\s*\)\s*;', text)
+                matches = re.search(r"ytcfg\.set\s*\(\s*({.+?})\s*\)\s*;", text)
                 if matches:
                     ytcfg = json.loads(matches.group(1))
                     return ytcfg.get("VISITOR_DATA", "")
@@ -129,9 +130,7 @@ class YTMusicFetcher:
         }
 
         response = requests.get(
-            "https://music.youtube.com/history",
-            headers=headers,
-            timeout=30
+            "https://music.youtube.com/history", headers=headers, timeout=30
         )
 
         if not response.ok:
@@ -149,7 +148,9 @@ class YTMusicFetcher:
 
     def _decode_hex_string(self, hex_str: str) -> str:
         """Decode hex-encoded string"""
-        return re.sub(r'\\x([0-9A-Fa-f]{2})', lambda m: chr(int(m.group(1), 16)), hex_str)
+        return re.sub(
+            r"\\x([0-9A-Fa-f]{2})", lambda m: chr(int(m.group(1), 16)), hex_str
+        )
 
     def _sanitize_json_string(self, json_str: str) -> str:
         """Sanitize JSON string by properly escaping unescaped quotes"""
@@ -231,11 +232,14 @@ class YTMusicFetcher:
                     )
 
                 # Check if it contains history data
-                if any(keyword in json_str for keyword in [
-                    "singleColumnBrowseResultsRenderer",
-                    "musicShelfRenderer",
-                    "FEmusic_history"
-                ]):
+                if any(
+                    keyword in json_str
+                    for keyword in [
+                        "singleColumnBrowseResultsRenderer",
+                        "musicShelfRenderer",
+                        "FEmusic_history",
+                    ]
+                ):
                     return parsed
 
             except json.JSONDecodeError:
@@ -262,11 +266,14 @@ class YTMusicFetcher:
 
                     # Check for history data
                     json_str = json.dumps(cleaned)
-                    if any(keyword in json_str for keyword in [
-                        "singleColumnBrowseResultsRenderer",
-                        "musicShelfRenderer",
-                        "FEmusic_history"
-                    ]):
+                    if any(
+                        keyword in json_str
+                        for keyword in [
+                            "singleColumnBrowseResultsRenderer",
+                            "musicShelfRenderer",
+                            "FEmusic_history",
+                        ]
+                    ):
                         return cleaned
 
                 except json.JSONDecodeError:
@@ -277,31 +284,39 @@ class YTMusicFetcher:
     def _sanitize_string(self, s: str) -> str:
         """Sanitize string by removing problematic characters"""
         # Decode Unicode escape sequences
-        s = re.sub(r'\\u([0-9A-Fa-f]{4})', lambda m: chr(int(m.group(1), 16)), s)
+        s = re.sub(r"\\u([0-9A-Fa-f]{4})", lambda m: chr(int(m.group(1), 16)), s)
 
         # Replace specific Unicode characters
         replacements = {
-            '\u2026': '...',  # ellipsis
-            '\u2013': '-',    # en dash
-            '\u2014': '-',    # em dash
-            '\u2018': "'",    # left single quotation mark
-            '\u2019': "'",    # right single quotation mark
-            '\u201C': '"',    # left double quotation mark
-            '\u201D': '"',    # right double quotation mark
+            "\u2026": "...",  # ellipsis
+            "\u2013": "-",  # en dash
+            "\u2014": "-",  # em dash
+            "\u2018": "'",  # left single quotation mark
+            "\u2019": "'",  # right single quotation mark
+            "\u201c": '"',  # left double quotation mark
+            "\u201d": '"',  # right double quotation mark
         }
 
         for old, new in replacements.items():
             s = s.replace(old, new)
 
         # Remove control characters and invalid Unicode
-        s = re.sub(r'[\u0000-\u001F\u007F\uFFFE\uFFFF]', '', s)
+        s = re.sub(r"[\u0000-\u001F\u007F\uFFFE\uFFFF]", "", s)
 
         return s
 
     def _parse_ytmusic_response(self, data: dict) -> list[dict[str, str]]:
         """Parse YouTube Music response data"""
         try:
-            results = data.get("contents", {}).get("singleColumnBrowseResultsRenderer", {}).get("tabs", [{}])[0].get("tabRenderer", {}).get("content", {}).get("sectionListRenderer", {}).get("contents", [])
+            results = (
+                data.get("contents", {})
+                .get("singleColumnBrowseResultsRenderer", {})
+                .get("tabs", [{}])[0]
+                .get("tabRenderer", {})
+                .get("content", {})
+                .get("sectionListRenderer", {})
+                .get("contents", [])
+            )
         except (KeyError, IndexError, TypeError):
             raise YouTubeFetchError("No results found in response data")
 
@@ -334,22 +349,32 @@ class YTMusicFetcher:
                 # Find title (watchEndpoint)
                 title = None
                 for column in flex_columns:
-                    column_renderer = column.get("musicResponsiveListItemFlexColumnRenderer", {})
+                    column_renderer = column.get(
+                        "musicResponsiveListItemFlexColumnRenderer", {}
+                    )
                     runs = column_renderer.get("text", {}).get("runs", [])
-                    if runs and runs[0].get("navigationEndpoint", {}).get("watchEndpoint"):
+                    if runs and runs[0].get("navigationEndpoint", {}).get(
+                        "watchEndpoint"
+                    ):
                         title = runs[0].get("text")
                         break
 
                 # Find artist (browseEndpoint with ARTIST page type)
                 artist = None
                 for column in flex_columns:
-                    column_renderer = column.get("musicResponsiveListItemFlexColumnRenderer", {})
+                    column_renderer = column.get(
+                        "musicResponsiveListItemFlexColumnRenderer", {}
+                    )
                     runs = column_renderer.get("text", {}).get("runs", [])
                     if runs:
                         endpoint = runs[0].get("navigationEndpoint", {})
                         browse_endpoint = endpoint.get("browseEndpoint", {})
-                        configs = browse_endpoint.get("browseEndpointContextSupportedConfigs", {})
-                        music_config = configs.get("browseEndpointContextMusicConfig", {})
+                        configs = browse_endpoint.get(
+                            "browseEndpointContextSupportedConfigs", {}
+                        )
+                        music_config = configs.get(
+                            "browseEndpointContextMusicConfig", {}
+                        )
                         if music_config.get("pageType") == "MUSIC_PAGE_TYPE_ARTIST":
                             artist = runs[0].get("text")
                             break
@@ -357,13 +382,19 @@ class YTMusicFetcher:
                 # Find album (browseEndpoint with ALBUM page type)
                 album = None
                 for column in flex_columns:
-                    column_renderer = column.get("musicResponsiveListItemFlexColumnRenderer", {})
+                    column_renderer = column.get(
+                        "musicResponsiveListItemFlexColumnRenderer", {}
+                    )
                     runs = column_renderer.get("text", {}).get("runs", [])
                     if runs:
                         endpoint = runs[0].get("navigationEndpoint", {})
                         browse_endpoint = endpoint.get("browseEndpoint", {})
-                        configs = browse_endpoint.get("browseEndpointContextSupportedConfigs", {})
-                        music_config = configs.get("browseEndpointContextMusicConfig", {})
+                        configs = browse_endpoint.get(
+                            "browseEndpointContextSupportedConfigs", {}
+                        )
+                        music_config = configs.get(
+                            "browseEndpointContextMusicConfig", {}
+                        )
                         if music_config.get("pageType") == "MUSIC_PAGE_TYPE_ALBUM":
                             album = runs[0].get("text")
                             break
@@ -374,12 +405,14 @@ class YTMusicFetcher:
 
                 # Skip songs without required data or Topic channels
                 if title and artist and not artist.endswith(" - Topic"):
-                    songs.append({
-                        "title": self._sanitize_string(title),
-                        "artist": self._sanitize_string(artist),
-                        "album": self._sanitize_string(album),
-                        "playedAt": played_at
-                    })
+                    songs.append(
+                        {
+                            "title": self._sanitize_string(title),
+                            "artist": self._sanitize_string(artist),
+                            "album": self._sanitize_string(album),
+                            "playedAt": played_at,
+                        }
+                    )
 
         return songs
 
