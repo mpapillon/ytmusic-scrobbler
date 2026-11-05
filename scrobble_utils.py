@@ -3,7 +3,6 @@ Smart scrobbling utilities with improved timestamp distribution and error handli
 Based on ytmusic-scrobbler-web worker implementation
 """
 
-import hashlib
 import math
 import sys
 import xml.etree.ElementTree as ET
@@ -236,14 +235,6 @@ class SmartScrobbler:
 
         return s
 
-    def _hash_request(self, params: dict[str, str]) -> str:
-        """Create MD5 hash for Last.fm API request"""
-        string = ""
-        for key in sorted(params.keys()):
-            string += key + params[key]
-        string += self.last_fm_api_secret
-        return hashlib.md5(string.encode("utf-8")).hexdigest()
-
     def scrobble_song(
         self, song: HistorySong, last_fm_session_key: str, timestamp: str
     ) -> bool:
@@ -267,9 +258,6 @@ class SmartScrobbler:
             "artist": self._sanitize_string(song.artist),
             "sk": last_fm_session_key,
         }
-
-        # Create API signature
-        api_sig = self._hash_request(params)
 
         # Use lastpy for scrobbling (assuming it's available)
         xml_response = lastpy.scrobble(

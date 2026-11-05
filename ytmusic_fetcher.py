@@ -216,7 +216,7 @@ class YTMusicFetcher:
                 decoded_data = self._decode_hex_string(hex_data)
 
                 # Check if it's valid JSON
-                if not (decoded_data.startswith("{") or decoded_data.startswith("[")):
+                if not (decoded_data.startswith(("{", "["))):
                     continue
 
                 # Sanitize and parse JSON
