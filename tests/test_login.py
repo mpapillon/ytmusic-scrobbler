@@ -95,7 +95,7 @@ class TestUpdateBrowserJson(unittest.TestCase):
             patch.object(scrobbler, "BROWSER_JSON_PATH", self.path),
             patch.object(sys, "argv", ["scrobbler.py", "--login"]),
             patch.object(scrobbler, "YTMusic") as mock_ytmusic,
-            patch.object(scrobbler, "Store") as mock_store,
+            patch.object(scrobbler, "DataStore") as mock_store,
         ):
             exit_code = scrobbler.main()
 
@@ -112,7 +112,7 @@ class TestMainCredentialLoading(unittest.TestCase):
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)
         self.path = os.path.join(tmpdir.name, "browser.json")
-        # main() now creates the Store (./data.db) before loading credentials
+        # main() now creates the DataStore (./data.json) before loading credentials
         orig_cwd = os.getcwd()
         self.addCleanup(os.chdir, orig_cwd)
         os.chdir(tmpdir.name)

@@ -6,28 +6,46 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from models import Track
 from scrobble_utils import (
-    HistorySong,
     PositionTracker,
     ScrobbleTimestampCalculator,
     compute_scrobble_window,
 )
 from store import Scrobble
 
-SONG_A = HistorySong("Song A", "Artist A", "Album A", played="Today")
-SONG_B = HistorySong("Song B", "Artist B", "Album B", played="Today")
-SONG_C = HistorySong("Song C", "Artist C", "Album C", played="Today")
 
-
-def db_entry(song: HistorySong, array_position: int) -> Scrobble:
-    return Scrobble(
-        id=1,
-        track_name=song.title,
-        artist_name=song.artist,
-        album_name=song.album,
-        array_position=array_position,
-        max_array_position=array_position,
+def make_track(
+    video_id: str,
+    title: str,
+    artist: str,
+    album: str,
+    played: str = "Today",
+    video_type: str = "MUSIC_VIDEO_TYPE_ATV",
+) -> Track:
+    return Track(
+        {
+            "videoId": video_id,
+            "title": title,
+            "artists": [{"name": artist}],
+            "album": {"name": album},
+            "videoType": video_type,
+            "played": played,
+        }
     )
+
+
+SONG_A = make_track("vid-a", "Song A", "Artist A", "Album A")
+SONG_B = make_track("vid-b", "Song B", "Artist B", "Album B")
+SONG_C = make_track("vid-c", "Song C", "Artist C", "Album C")
+
+
+def db_entry(song: Track, array_position: int) -> Scrobble:
+    scrobble = Scrobble()
+    scrobble.track = song
+    scrobble.array_position = array_position
+    scrobble.max_array_position = array_position
+    return scrobble
 
 
 class TestDetectSongsToScrobbleCalibration(unittest.TestCase):
@@ -80,25 +98,13 @@ class TestDetectSongsToScrobbleNominal(unittest.TestCase):
         self.assertEqual(b_item["reason"], "position_update")
         self.assertFalse(b_item["should_scrobble"])
 
-    def test_same_title_different_artist_is_not_a_match(self):
-        same_title_other_artist = HistorySong(
-            "Song A", "Someone Else", "Other Album", played="Today"
+    def test_same_metadata_different_video_id_is_not_a_match(self):
+        """Matching is video id based: a different video with the same
+        title/artist/album (e.g. a live version) is a different play."""
+        same_metadata_other_video = make_track(
+            "vid-other", "Song A", "Artist A", "Album A"
         )
-        today = [same_title_other_artist]
-        database_songs = [db_entry(SONG_A, 1)]
-        result = PositionTracker.detect_songs_to_scrobble(
-            today, database_songs, is_first_time=False
-        )
-
-        # Must not be matched against SONG_A's stale entry - it's a different song
-        self.assertEqual(result[0]["reason"], "new_song")
-        self.assertTrue(result[0]["should_scrobble"])
-
-    def test_same_title_and_artist_different_album_is_not_a_match(self):
-        same_title_artist_other_album = HistorySong(
-            "Song A", "Artist A", "Live Version", played="Today"
-        )
-        today = [same_title_artist_other_album]
+        today = [same_metadata_other_video]
         database_songs = [db_entry(SONG_A, 1)]
         result = PositionTracker.detect_songs_to_scrobble(
             today, database_songs, is_first_time=False
@@ -106,6 +112,19 @@ class TestDetectSongsToScrobbleNominal(unittest.TestCase):
 
         self.assertEqual(result[0]["reason"], "new_song")
         self.assertTrue(result[0]["should_scrobble"])
+
+    def test_same_video_id_with_changed_metadata_is_a_match(self):
+        """The stored track may have stale metadata; the video id is what
+        identifies a play."""
+        renamed = make_track("vid-a", "Song A (Remastered)", "Artist A", "Album A")
+        today = [renamed]
+        database_songs = [db_entry(SONG_A, 1)]
+        result = PositionTracker.detect_songs_to_scrobble(
+            today, database_songs, is_first_time=False
+        )
+
+        self.assertEqual(result[0]["reason"], "position_update")
+        self.assertFalse(result[0]["should_scrobble"])
 
 
 class TestScrobbleTimestampCalculatorSingleSong(unittest.TestCase):

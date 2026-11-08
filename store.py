@@ -1,170 +1,75 @@
-import sqlite3
-from contextlib import contextmanager
-from dataclasses import dataclass
-from typing import final
+from __future__ import annotations
 
+import json
+from datetime import datetime
+from pathlib import Path
+from typing import Any, final
 
-@dataclass
-class Scrobble:
-    id: int
-    track_name: str = ""
-    artist_name: str = ""
-    album_name: str = ""
-    scrobbled_at: str | None = None
-    array_position: int | None = None
-    max_array_position: int | None = None
+from models import Scrobble, Track
 
 
 @final
-class Store:
-    def __init__(self):
-        self.conn = sqlite3.connect("./data.db")
+class DataStore:
+    _path: Path
+    _data: dict[str, Any]
 
-    @contextmanager
-    def transaction(self):
-        with self.conn:
-            yield self
+    def __init__(self, path: Path):
+        self._path = path
+        self._data = self._load()
 
-    def migrate(self):
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS scrobbles (
-                id INTEGER PRIMARY KEY,
-                track_name TEXT,
-                artist_name TEXT,
-                album_name TEXT,
-                scrobbled_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                array_position INTEGER,
-                max_array_position INTEGER
-            )
-        """)
+    def _load(self) -> dict[str, Any]:
+        if not self._path.is_file():
+            return {}
+        with open(self._path, "r") as f:
+            return json.load(f)
 
-        # Add new columns if they don't exist (for backward compatibility)
-        try:
-            cursor.execute(
-                "ALTER TABLE scrobbles ADD COLUMN max_array_position INTEGER"
-            )
-        except sqlite3.OperationalError:
-            pass  # Column already exists
+    def save(self) -> None:
+        tmp = self._path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self._data, indent=2, ensure_ascii=False))
+        tmp.replace(self._path)
 
-        # Single-row table tracking the last successful (non-dry-run) run, used to
-        # bound the fake-timestamp distribution window to the real elapsed gap
-        # since that run instead of a fixed guess.
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS run_state (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                last_success_at INTEGER
-            )
-        """)
-        cursor.execute(
-            "INSERT OR IGNORE INTO run_state (id, last_success_at) VALUES (1, NULL)"
-        )
+    @property
+    def last_success_at(self) -> int | None:
+        return self._data.get("last_success_at")
 
-        self.conn.commit()
-        cursor.close()
+    @last_success_at.setter
+    def last_success_at(self, value: int):
+        self._data["last_success_at"] = value
 
-    def get_last_success_at(self) -> int | None:
-        cursor = self.conn.cursor()
-        try:
-            result = cursor.execute(
-                "SELECT last_success_at FROM run_state WHERE id = 1"
-            ).fetchone()
-            return result[0] if result else None
-        finally:
-            cursor.close()
-
-    def update_last_success_at(self, timestamp: int):
-        cursor = self.conn.cursor()
-        try:
-            cursor.execute(
-                "UPDATE run_state SET last_success_at = ? WHERE id = 1", (timestamp,)
-            )
-        finally:
-            cursor.close()
+    @property
+    def _scrobbles(self) -> dict[str, dict[str, Any]]:
+        return self._data.setdefault("scrobbles", {})
 
     def get_scrobbles(self) -> list[Scrobble]:
-        cursor = self.conn.cursor()
-        try:
-            rows = cursor.execute("""
-                SELECT id, track_name, artist_name, album_name, scrobbled_at,
-                       array_position, max_array_position
-                FROM scrobbles
-            """).fetchall()
-            return [Scrobble(*row) for row in rows]
-        finally:
-            cursor.close()
+        return [Scrobble(s) for s in self._scrobbles.values()]
 
-    def find_scrobble(
-        self, track_name: str, artist_name: str, album_name: str
-    ) -> Scrobble | None:
-        cursor = self.conn.cursor()
-        try:
-            result = cursor.execute(
-                """
-                SELECT id, track_name, artist_name, album_name, scrobbled_at,
-                       array_position, max_array_position
-                FROM scrobbles
-                WHERE track_name = ? AND artist_name = ? AND album_name = ?
-            """,
-                (track_name, artist_name, album_name),
-            ).fetchone()
-            return Scrobble(*result) if result else None
-        finally:
-            cursor.close()
+    def find_scrobble(self, video_id: str) -> Scrobble | None:
+        return Scrobble(s) if (s := self._scrobbles.get(video_id)) is not None else None
 
     def insert_scrobble(
         self,
-        track_name: str,
-        artist_name: str,
-        album_name: str,
+        track: Track,
         array_position: int,
         max_array_position: int | None,
     ):
-        cursor = self.conn.cursor()
-        try:
-            cursor.execute(
-                """
-                INSERT INTO scrobbles (track_name, artist_name, album_name, array_position, max_array_position)
-                VALUES (?, ?, ?, ?, ?)
-            """,
-                (
-                    track_name,
-                    artist_name,
-                    album_name,
-                    array_position,
-                    max_array_position,
-                ),
-            )
-            return cursor.lastrowid
-        finally:
-            cursor.close()
+        s = Scrobble()
+        s.track = track
+        s.array_position = array_position
+        s.max_array_position = max_array_position
+        s.scrobbled_at = datetime.now().isoformat()
+
+        self._scrobbles[s.video_id] = s.json
 
     def update_scrobble_position(
-        self, id: int, array_position: int, max_array_position: int | None
+        self, video_id: str, array_position: int, max_array_position: int | None
     ):
-        cursor = self.conn.cursor()
-        try:
-            cursor.execute(
-                """
-                UPDATE scrobbles
-                SET array_position = ?, max_array_position = ?, scrobbled_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """,
-                (array_position, max_array_position, id),
-            )
-        finally:
-            cursor.close()
-
-    def delete_scrobbles(self, ids: list[int]):
-        if not ids:
+        if (s := self.find_scrobble(video_id)) is None:
             return
-        cursor = self.conn.cursor()
-        try:
-            cursor.execute(
-                "DELETE FROM scrobbles WHERE id IN ({})".format(
-                    ",".join("?" for _ in ids)
-                ),
-                ids,
-            )
-        finally:
-            cursor.close()
+
+        s.array_position = array_position
+        s.max_array_position = max_array_position
+        s.scrobbled_at = datetime.now().isoformat()
+
+    def delete_scrobbles(self, video_ids: list[str]):
+        for video_id in video_ids:
+            self._scrobbles.pop(video_id, None)

@@ -6,12 +6,12 @@ Based on ytmusic-scrobbler-web worker implementation
 import math
 import sys
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal, NotRequired, TypedDict, final
+from typing import final
 
 import lastpy
 from errors import FailureType, ScrobblerError
+from models import SongToScrobble, Track
 from store import Scrobble
 
 
@@ -25,47 +25,6 @@ def log_warning(message: str) -> None:
 
 def log_error(message: str) -> None:
     print(f"Error: {message}", file=sys.stderr)
-
-
-@dataclass(frozen=True, slots=True)
-class HistorySong:
-    title: str
-    artist: str
-    album: str
-    played: str
-
-    @classmethod
-    def from_api_item(cls, item: dict[str, Any]) -> "HistorySong | None":
-        """Build from a ytmusicapi get_history() entry. Returns None for entries
-        to drop: non-music, missing title/artist, or auto-generated ' - Topic' channels."""
-        title = item.get("title")
-        artists = item.get("artists") or []
-        artist = artists[0].get("name") if artists else None
-        video_type = item.get("videoType") or ""
-
-        if (
-            not title
-            or not artist
-            or artist.endswith(" - Topic")
-            or not video_type.startswith("MUSIC_VIDEO_TYPE_")
-        ):
-            return None
-
-        album = (item.get("album") or {}).get("name") or title
-        return cls(
-            title=title, artist=artist, album=album, played=item.get("played") or ""
-        )
-
-    def was_played_today(self) -> bool:
-        return self.played.lower() == "today"
-
-
-class SongToScrobble(TypedDict):
-    song: HistorySong
-    position: int
-    reason: Literal["calibration", "new_song", "reproduction", "position_update"]
-    should_scrobble: bool
-    previous_position: NotRequired[int | None]
 
 
 def start_of_day(now: int) -> int:
@@ -239,7 +198,7 @@ class SmartScrobbler:
         return s
 
     def scrobble_song(
-        self, song: HistorySong, last_fm_session_key: str, timestamp: str
+        self, song: Track, last_fm_session_key: str, timestamp: str
     ) -> bool:
         """
         Scrobble a single song to Last.fm
@@ -253,12 +212,12 @@ class SmartScrobbler:
             True if scrobble was successful, False otherwise
         """
         params = {
-            "album": self._sanitize_string(song.album),
+            "album": self._sanitize_string(song.album.name),
             "api_key": self.last_fm_api_key,
             "method": "track.scrobble",
             "timestamp": timestamp,
             "track": self._sanitize_string(song.title),
-            "artist": self._sanitize_string(song.artist),
+            "artist": self._sanitize_string(song.artists[0].name),
             "sk": last_fm_session_key,
         }
 
@@ -334,7 +293,7 @@ class PositionTracker:
 
     @staticmethod
     def detect_songs_to_scrobble(
-        today_songs: list[HistorySong],
+        today_tracks: list[Track],
         database_scrobbles: list[Scrobble],
         is_first_time: bool = False,
     ) -> list[SongToScrobble]:
@@ -342,7 +301,7 @@ class PositionTracker:
         Determine which songs should be scrobbled based on position tracking
 
         Args:
-            today_songs: Songs from today's history (with position index)
+            today_tracks: Songs from today's history (with position index)
             database_songs: Songs already in database with max_array_position
             is_first_time: Whether this is the very first run ever (empty DB) -
                 calibrates position tracking without scrobbling anything, so future
@@ -355,10 +314,10 @@ class PositionTracker:
 
         if is_first_time:
             # First run ever: record today's songs as a baseline, scrobble nothing
-            for i, song in enumerate(today_songs):
+            for i, track in enumerate(today_tracks):
                 songs_to_scrobble.append(
                     {
-                        "song": song,
+                        "song": track,
                         "position": i + 1,
                         "reason": "calibration",
                         "should_scrobble": False,
@@ -366,25 +325,21 @@ class PositionTracker:
                 )
         else:
             # Regular processing: check for new songs and re-reproductions
-            for i, song in enumerate(today_songs):
+            for i, track in enumerate(today_tracks):
                 current_position = i + 1
 
                 # Find matching song in database
                 saved_scrobble: Scrobble | None = None
-                for db_scrobble in database_scrobbles:
-                    if (
-                        db_scrobble.track_name == song.title
-                        and db_scrobble.artist_name == song.artist
-                        and db_scrobble.album_name == song.album
-                    ):
-                        saved_scrobble = db_scrobble
+                for scrobble in database_scrobbles:
+                    if scrobble.video_id == track.video_id:
+                        saved_scrobble = scrobble
                         break
 
                 if not saved_scrobble:
                     # New song - scrobble it
                     songs_to_scrobble.append(
                         {
-                            "song": song,
+                            "song": track,
                             "position": current_position,
                             "reason": "new_song",
                             "should_scrobble": True,
@@ -394,7 +349,7 @@ class PositionTracker:
                     # Re-reproduction - song moved up in the list (better position than previous session)
                     songs_to_scrobble.append(
                         {
-                            "song": song,
+                            "song": track,
                             "position": current_position,
                             "reason": "reproduction",
                             "should_scrobble": True,
@@ -405,7 +360,7 @@ class PositionTracker:
                     # Song exists and hasn't moved up - just update position
                     songs_to_scrobble.append(
                         {
-                            "song": song,
+                            "song": track,
                             "position": current_position,
                             "reason": "position_update",
                             "should_scrobble": False,

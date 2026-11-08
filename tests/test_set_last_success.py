@@ -10,6 +10,7 @@ import tempfile
 import time
 import unittest
 from datetime import datetime, timedelta
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -21,11 +22,11 @@ os.environ.setdefault("LASTFM_SESSION", "dummy")
 import scrobble_utils
 import scrobbler
 from scrobble_utils import start_of_day
-from store import Store
+from store import DataStore
 
 
 class TmpCwdTestCase(unittest.TestCase):
-    """Real Store writes './data.db' - keep every test in its own tmpdir."""
+    """Real Store writes './data.json'. Keep every test in its own tmpdir."""
 
     def setUp(self):
         tmpdir = tempfile.TemporaryDirectory()
@@ -59,11 +60,8 @@ class TestMainSetLastSuccess(TmpCwdTestCase):
         return exit_code, mock_cls
 
     def read_anchor(self):
-        store = Store()
-        try:
-            return store.get_last_success_at()
-        finally:
-            store.conn.close()
+        store = DataStore(Path(scrobbler.DATA_JSON_PATH))
+        return store.last_success_at
 
     def test_valid_value_is_written_and_passed_to_run(self):
         anchor = datetime.now().replace(microsecond=0) - timedelta(hours=5)
@@ -155,8 +153,7 @@ class TestExecuteAnchorOverride(TmpCwdTestCase):
         patcher2.start()
 
     def new_process(self, anchor_override=None, dry_run=False):
-        store = Store()
-        store.migrate()
+        store = DataStore(Path(scrobbler.DATA_JSON_PATH))
         return scrobbler.ImprovedProcess(
             store,
             self.ytmusic,
@@ -195,10 +192,9 @@ class TestExecuteAnchorOverride(TmpCwdTestCase):
         # The oldest scrobble lands exactly at the override - proof the window
         # started there instead of falling back to calibration/midnight guess.
         self.assertEqual(min(ts for _, ts in self.scrobbled), anchor)
-        # A completed run re-anchors to now, as usual.
-        last_success_at = process.store.conn.execute(
-            "SELECT last_success_at FROM run_state"
-        ).fetchone()[0]
+        # A completed run re-anchors to now, as usual (persisted on disk).
+        last_success_at = DataStore(Path(scrobbler.DATA_JSON_PATH)).last_success_at
+        self.assertIsNotNone(last_success_at)
         self.assertGreater(last_success_at, anchor)
 
     def test_dry_run_with_override_writes_nothing(self):
@@ -218,14 +214,9 @@ class TestExecuteAnchorOverride(TmpCwdTestCase):
         process.execute()
 
         self.assertEqual(self.scrobbled, [])
-        rows = process.store.conn.execute("SELECT COUNT(*) FROM scrobbles").fetchone()[
-            0
-        ]
-        state = process.store.conn.execute(
-            "SELECT last_success_at FROM run_state"
-        ).fetchone()[0]
-        self.assertEqual(rows, 0)
-        self.assertIsNone(state)
+        store = DataStore(Path(scrobbler.DATA_JSON_PATH))
+        self.assertEqual(store.get_scrobbles(), [])
+        self.assertIsNone(store.last_success_at)
 
 
 if __name__ == "__main__":

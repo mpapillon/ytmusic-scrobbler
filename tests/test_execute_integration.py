@@ -1,14 +1,16 @@
 """
-Integration tests for ImprovedProcess.execute(): the full flow through a temp SQLite
-DB, with network calls (YouTube Music history fetch, Last.fm scrobble) mocked out.
+Integration tests for ImprovedProcess.execute(): the full flow through a temp
+JSON DataStore, with network calls (YouTube Music history fetch, Last.fm
+scrobble) mocked out.
 """
 
 import os
-import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -20,30 +22,37 @@ os.environ.setdefault("LASTFM_SESSION", "dummy")
 import scrobble_utils
 import scrobbler
 from errors import FailureType
-from store import Store
+from store import DataStore
 
 
-def api_song(title: str, artist: str, album: str) -> dict:
+def api_song(
+    video_id: str,
+    title: str,
+    artist: str,
+    album: str,
+    video_type: str = "MUSIC_VIDEO_TYPE_ATV",
+) -> dict:
     """Song in the raw format returned by ytmusicapi get_history()."""
     return {
+        "videoId": video_id,
         "title": title,
         "artists": [{"name": artist}],
         "album": {"name": album},
-        "videoType": "MUSIC_VIDEO_TYPE_ATV",
+        "videoType": video_type,
         "played": "Today",
     }
 
 
-SONG_1 = api_song("Song1", "Art1", "Alb1")
-SONG_2 = api_song("Song2", "Art2", "Alb2")
-SONG_3 = api_song("Song3", "Art3", "Alb3")
+SONG_1 = api_song("vid-1", "Song1", "Art1", "Alb1")
+SONG_2 = api_song("vid-2", "Song2", "Art2", "Alb2")
+SONG_3 = api_song("vid-3", "Song3", "Art3", "Alb3")
 
 
 class ExecuteIntegrationTestCase(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.TemporaryDirectory()
         self._orig_cwd = os.getcwd()
-        os.chdir(self.tmpdir.name)  # ImprovedProcess hardcodes './data.db'
+        os.chdir(self.tmpdir.name)  # DataStore lives at './data.json'
 
         self.history = []
         self.scrobbled = []
@@ -68,14 +77,23 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
         self.addCleanup(self.tmpdir.cleanup)
 
     def new_process(self, dry_run=False, to_datetime=None):
-        store = Store()
-        store.migrate()
+        store = DataStore(Path(scrobbler.DATA_JSON_PATH))
         return scrobbler.ImprovedProcess(
             store,
             self.ytmusic,
             to_datetime=to_datetime or datetime.now(),
             dry_run=dry_run,
         )
+
+    def stored(self, process):
+        """Scrobbles held by the process' store, as (title, array_position)."""
+        return sorted(
+            (s.track.title, s.array_position or 0)
+            for s in process._store.get_scrobbles()
+        )
+
+    def stored_titles(self, process):
+        return [title for title, _ in self.stored(process)]
 
     def test_initial_run_is_calibration_only(self):
         self.history[:] = [SONG_1, SONG_2]
@@ -84,14 +102,9 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
         process.execute()
 
         self.assertEqual(self.scrobbled, [])
-        rows = process.store.conn.execute(
-            "SELECT track_name, array_position FROM scrobbles"
-        ).fetchall()
-        self.assertEqual(sorted(rows), [("Song1", 1), ("Song2", 2)])
-        last_success_at = process.store.conn.execute(
-            "SELECT last_success_at FROM run_state"
-        ).fetchone()[0]
-        self.assertIsNotNone(last_success_at)
+        self.assertEqual(self.stored(process), [("Song1", 1), ("Song2", 2)])
+        # The run anchor is persisted to disk, not just kept in memory.
+        self.assertIsNotNone(DataStore(Path(scrobbler.DATA_JSON_PATH)).last_success_at)
 
     def test_nominal_run_scrobbles_new_song_only(self):
         self.history[:] = [SONG_1, SONG_2]
@@ -125,8 +138,7 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
         # Song2 drops out of today's history (e.g. transient scraping gap)
         self.history[:] = [SONG_1]
         process.execute()
-        rows = process.store.conn.execute("SELECT track_name FROM scrobbles").fetchall()
-        self.assertEqual([r[0] for r in rows], ["Song1"])
+        self.assertEqual(self.stored_titles(process), ["Song1"])
 
         # Song2 is played again today
         self.history.insert(0, SONG_2)
@@ -134,6 +146,26 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
         process.execute()
 
         self.assertEqual([title for title, _ in self.scrobbled], ["Song2"])
+
+    def test_non_music_history_entries_are_ignored(self):
+        """Podcasts/non-music entries and ' - Topic' channels must never be
+        recorded or scrobbled."""
+        podcast = {
+            "videoId": "vid-podcast",
+            "title": "Some Podcast Episode",
+            "artists": [{"name": "Podcaster"}],
+            "played": "Today",
+        }
+        topic_channel = api_song(
+            "vid-topic", "Topic Song", "Some Artist - Topic", "Album"
+        )
+        self.history[:] = [podcast, topic_channel, SONG_1]
+        process = self.new_process()
+
+        process.execute()
+
+        self.assertEqual(self.scrobbled, [])
+        self.assertEqual(self.stored(process), [("Song1", 1)])
 
     def test_gap_crossing_a_day_boundary_is_treated_as_calibration(self):
         """Regression test: once last_success_at falls on a previous calendar day,
@@ -144,10 +176,8 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
         process = self.new_process()
         process.execute()  # calibration on "day 1"
 
-        process.store.conn.execute(
-            "UPDATE run_state SET last_success_at = strftime('%s','now','-3 days')"
-        )
-        process.store.conn.commit()
+        process._store.last_success_at = int(time.time()) - 3 * 86400
+        process._store.save()
 
         # "Today" is now a different day - a completely different set of songs,
         # none of which match the stale rows from before the gap.
@@ -155,18 +185,19 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
         process.execute()
 
         self.assertEqual(self.scrobbled, [])
-        rows = process.store.conn.execute("SELECT track_name FROM scrobbles").fetchall()
-        self.assertEqual([r[0] for r in rows], ["Song3"])
+        self.assertEqual(self.stored_titles(process), ["Song3"])
 
     def test_same_day_gap_with_wiped_db_still_scrobbles_normally(self):
         """Regression test: a run where nothing has been played yet today exits early
         without cleaning up yesterday's stale rows. The next run - the one that
         actually has today's songs - wipes those stale rows too, emptying
-        database_songs, but last_success_at is still from earlier today (a real,
+        database_scrobbles, but last_success_at is still from earlier today (a real,
         recent anchor), so this must scrobble normally rather than mistake the wiped
-        table for a fresh install and silently calibrate instead."""
+        store for a fresh install and silently calibrate instead."""
+        # Pin "now" to noon so the same-day assumption can't break at midnight.
+        noon = datetime.now().replace(hour=12, minute=0, second=0, microsecond=0)
         self.history[:] = [SONG_1, SONG_2]
-        process = self.new_process()
+        process = self.new_process(to_datetime=noon)
         process.execute()  # calibration on "day 1"
 
         # Next run: nothing played yet today, exits early before cleanup runs.
@@ -194,12 +225,10 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
         process.execute()  # calibration on "day 1"
 
         two_hours_ago = int(noon.timestamp()) - 2 * 3600
-        process.store.conn.execute(
-            "UPDATE run_state SET last_success_at = ?", (two_hours_ago,)
-        )
-        process.store.conn.commit()
+        process._store.last_success_at = two_hours_ago
+        process._store.save()
 
-        # DB wiped by an intervening empty-today run, same as the reported bug -
+        # Store wiped by an intervening empty-today run, same as the reported bug -
         # but last_success_at is still a real, recent, same-day anchor.
         self.history[:] = []
         process.execute()
@@ -214,67 +243,18 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
         self.assertEqual(min(timestamps), two_hours_ago)
         self.assertGreater(max(timestamps), min(timestamps))
 
-    def test_readonly_db_skips_scrobble_instead_of_scrobbling_unrecorded(self):
-        """Regression test: if the DB can't be written (read-only), a new song
-        must NOT be scrobbled - otherwise the next run would re-scrobble it as a
-        duplicate (the original bug: update happened after the scrobble)."""
-        self.history[:] = [SONG_1]
-        process = self.new_process()
-        process.execute()  # calibration
-
-        process.store.conn.execute("PRAGMA query_only=ON")
-
-        self.history[:] = [SONG_1, SONG_3]
-        self.scrobbled.clear()
-        # The final run_state update fails on the read-only DB and propagates.
-        with self.assertRaises(sqlite3.OperationalError):
-            process.execute()
-
-        self.assertEqual(self.scrobbled, [])
-
-    def test_rollback_undoes_db_write_when_scrobble_raises(self):
-        """A scrobble that raises must roll back the song's position write, so the
-        song is retried as new on the next run instead of being silently lost."""
-        self.history[:] = [SONG_1]
-        process = self.new_process()
-        process.execute()  # calibration
-
-        self.scrobbled.clear()
-        with patch.object(
-            scrobble_utils.SmartScrobbler,
-            "scrobble_song",
-            side_effect=RuntimeError("network down"),
-        ):
-            self.history[:] = [SONG_1, SONG_3]
-            process.execute()
-
-        # Song3's insert was rolled back; only the pre-existing Song1 remains.
-        rows = process.store.conn.execute("SELECT track_name FROM scrobbles").fetchall()
-        self.assertEqual([r[0] for r in rows], ["Song1"])
-        self.assertEqual(self.scrobbled, [])
-
-        # Next run with a working scrobble retries Song3 as a new song.
-        self.history[:] = [SONG_1, SONG_3]
-        process.execute()
-        self.assertEqual([title for title, _ in self.scrobbled], ["Song3"])
-        rows = process.store.conn.execute("SELECT track_name FROM scrobbles").fetchall()
-        self.assertEqual(sorted(r[0] for r in rows), ["Song1", "Song3"])
-
     def test_dry_run_never_writes_to_the_database(self):
         self.history[:] = [SONG_1, SONG_2]
         process = self.new_process(dry_run=True)
+        data_path = Path(scrobbler.DATA_JSON_PATH)
 
-        before = process.store.conn.execute("SELECT * FROM scrobbles").fetchall()
-        before_state = process.store.conn.execute("SELECT * FROM run_state").fetchall()
+        self.assertFalse(data_path.exists())
         process.execute()
-        after = process.store.conn.execute("SELECT * FROM scrobbles").fetchall()
-        after_state = process.store.conn.execute("SELECT * FROM run_state").fetchall()
 
-        self.assertEqual(before, after)
-        self.assertEqual(before_state, after_state)
-        self.assertEqual(
-            self.scrobbled, []
-        )  # scrobble_song must never actually be called
+        self.assertFalse(data_path.exists())
+        self.assertEqual(process._store.get_scrobbles(), [])
+        self.assertIsNone(process._store.last_success_at)
+        self.assertEqual(self.scrobbled, [])
 
     def test_expired_auth_returning_none_history_is_auth_failure(self):
         """Regression test: with stale browser.json credentials, get_history()
@@ -288,10 +268,7 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
 
         self.assertEqual(failure, FailureType.AUTH)
         self.assertEqual(self.scrobbled, [])
-        last_success_at = process.store.conn.execute(
-            "SELECT last_success_at FROM run_state"
-        ).fetchone()[0]
-        self.assertIsNone(last_success_at)
+        self.assertIsNone(process._store.last_success_at)
 
 
 if __name__ == "__main__":

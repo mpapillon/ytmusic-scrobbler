@@ -47,7 +47,7 @@ On first run you need to:
 
 ### Podman/Docker
 
-The application can run in a container: credentials and state (`.env`, `browser.json`, `data.db`) are simply mounted from the host at runtime.
+The application can run in a container: credentials and state (`.env`, `browser.json`, `data.json`) are simply mounted from the host at runtime.
 
 Build the image:
 
@@ -70,7 +70,7 @@ which can make it miss or duplicate songs. Set it on every run — do not rely o
 #### Test with a dry run
 
 The simplest option is to mount the whole project directory as `/data`.
-The `.env`, `browser.json` and `data.db` are then picked up automatically:
+The `.env`, `browser.json` and `data.json` are then picked up automatically:
 
 ```bash
 podman run --rm -it \
@@ -86,7 +86,7 @@ podman run --rm -it \
   -e TZ=Europe/Paris \
   --env-file .env \
   -v "$PWD/browser.json:/data/browser.json:ro,Z" \
-  -v "$PWD/data.db:/data/data.db:Z" \
+  -v "$PWD/data.json:/data/data.json:Z" \
   ytmusic-scrobbler --dry-run
 ```
 
@@ -102,7 +102,7 @@ podman run --rm \
   -e TZ=Europe/Paris \
   --env-file .env \
   -v "$PWD/browser.json:/data/browser.json:ro,Z" \
-  -v "$PWD/data.db:/data/data.db:Z" \
+  -v "$PWD/data.json:/data/data.json:Z" \
   ytmusic-scrobbler
 ```
 
@@ -127,7 +127,7 @@ podman run --rm \
 4. **Later runs**: smart position tracking identifies new songs and re-reproductions
 5. **Calculates timestamps**: logarithmic spread across the time since your last successful run, clamped to today
 6. **Scrobbles to Last.fm** with proper error handling and retry logic
-7. **Updates database** with enhanced tracking information
+7. **Updates the tracking file** with enhanced tracking information
 
 ## 🔧 Configuration
 
@@ -145,7 +145,7 @@ LASTFM_SESSION=your_session_token
 |-----------------|----------------------------------------------------|
 | `.env`          | API keys and tokens                                |
 | `browser.json`  | YouTube Music credentials (created by `--login`, keep private) |
-| `data.db`       | SQLite tracking database                             |
+| `data.json`     | Scrobble history and run state                       |
 
 ## 🐛 Troubleshooting
 

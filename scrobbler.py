@@ -12,9 +12,9 @@ import json
 import os
 import sys
 import time
-import webbrowser
 import xml.etree.ElementTree as ET
 from datetime import datetime
+from pathlib import Path
 from typing import final
 
 from dotenv import find_dotenv, load_dotenv, set_key
@@ -23,8 +23,8 @@ from ytmusicapi.exceptions import YTMusicUserError
 
 import lastpy
 from errors import ConfigError, FailureType, LastFmError
+from models import Track
 from scrobble_utils import (
-    HistorySong,
     PositionTracker,
     SmartScrobbler,
     compute_scrobble_window,
@@ -33,11 +33,12 @@ from scrobble_utils import (
     log_warning,
     start_of_day,
 )
-from store import Store
+from store import DataStore
 
 load_dotenv(find_dotenv(usecwd=True))
 
 BROWSER_JSON_PATH = "browser.json"
+DATA_JSON_PATH = "data.json"
 MAX_BROWSER_SETUP_ATTEMPTS = 3
 
 
@@ -63,7 +64,7 @@ def _parse_local_iso(value: str) -> datetime:
 class ImprovedProcess:
     def __init__(
         self,
-        store: Store,
+        store: DataStore,
         ytmusic: YTMusic,
         to_datetime: datetime,
         dry_run: bool = False,
@@ -88,7 +89,7 @@ class ImprovedProcess:
         # Initialize smart scrobbler
         self.scrobbler = SmartScrobbler(self.api_key, self.api_secret)
         self.position_tracker = PositionTracker()
-        self.store = store
+        self._store = store
 
     def get_token(self) -> str:
         auth_token = lastpy.get_token()
@@ -100,7 +101,6 @@ class ImprovedProcess:
         timeout_minutes = 5
         max_attempts = timeout_minutes * 60 // poll_interval_seconds
 
-        webbrowser.open(auth_url)
         print(
             "\nLast.fm authorization required. Open this URL and approve access:\n"
             f"\n    {auth_url}\n\n"
@@ -156,7 +156,7 @@ class ImprovedProcess:
         last_success_at = (
             self.anchor_override
             if self.anchor_override is not None
-            else self.store.get_last_success_at()
+            else self._store.last_success_at
         )
         if self.anchor_override is not None and self.dry_run:
             log_info(
@@ -192,49 +192,44 @@ class ImprovedProcess:
             self.handle_authentication_error()
             return FailureType.AUTH
 
-        history = [
-            s for s in map(HistorySong.from_api_item, raw_history) if s is not None
-        ]
+        history = [Track(h) for h in raw_history]
         log_info(f"Retrieved {len(history)} songs from history")
 
-        print()
-        log_info("Filtering songs played today...")
-        today_songs = [song for song in history if song.was_played_today()]
+        today_tracks = [
+            track
+            for track in history
+            if track.was_played_today and track.is_regular_track
+        ]
+        log_info(f"Found {len(today_tracks)} songs played today")
 
-        log_info(f"Found {len(today_songs)} songs played today")
-
-        if len(today_songs) == 0:
+        if len(today_tracks) == 0:
             log_info("Nothing to scrobble.")
             return None
 
         print()
 
-        database_scrobbles = self.store.get_scrobbles()
+        scrobbles = self._store.get_scrobbles()
 
         # Clean up database: remove songs not in today's history
-        if database_scrobbles:
-            scrobbles_to_delete: list[int] = []
-            for db_song in database_scrobbles:
+        if scrobbles:
+            scrobbles_to_delete: list[str] = []
+            for scrobble in scrobbles:
                 found = False
-                for today_song in today_songs:
-                    if (
-                        today_song.title == db_song.track_name
-                        and today_song.artist == db_song.artist_name
-                        and today_song.album == db_song.album_name
-                    ):
+                for today_song in today_tracks:
+                    if today_song.video_id == scrobble.video_id:
                         found = True
                         break
 
                 if not found:
-                    scrobbles_to_delete.append(db_song.id)
+                    scrobbles_to_delete.append(scrobble.video_id)
 
             if scrobbles_to_delete:
                 # Drop these from the in-memory list too, not just the DB table -
                 # otherwise a song that legitimately replays later in the day still
                 # matches its stale in-memory entry and gets wrongly treated as
                 # "already known" instead of a new play.
-                database_scrobbles = [
-                    s for s in database_scrobbles if s.id not in scrobbles_to_delete
+                scrobbles = [
+                    s for s in scrobbles if s.video_id not in scrobbles_to_delete
                 ]
 
                 if self.dry_run:
@@ -245,14 +240,14 @@ class ImprovedProcess:
                     log_info(
                         f"Removing {len(scrobbles_to_delete)} songs no longer in today's history"
                     )
-                    with self.store.transaction():
-                        self.store.delete_scrobbles(scrobbles_to_delete)
+                    self._store.delete_scrobbles(scrobbles_to_delete)
+                    self._store.save()
 
         now = int(self.to_datetime.timestamp())
         is_first_time = last_success_at is None or last_success_at < start_of_day(now)
 
         songs_to_process = self.position_tracker.detect_songs_to_scrobble(
-            today_songs, database_scrobbles, is_first_time
+            today_tracks, scrobbles, is_first_time
         )
 
         # Count how many will actually be scrobbled
@@ -261,7 +256,7 @@ class ImprovedProcess:
 
         if is_first_time:
             log_info(
-                f"Calibration run: recording {len(today_songs)} songs as a baseline, nothing scrobbled. "
+                f"Calibration run: recording {len(today_tracks)} songs as a baseline, nothing scrobbled. "
                 f"Future runs will scrobble new plays going forward."
             )
 
@@ -292,44 +287,41 @@ class ImprovedProcess:
                         scrobble_position += 1
                     continue
 
-                with self.store.transaction():
-                    existing_scrobble = self.store.find_scrobble(
-                        song.title, song.artist, song.album
+                existing_scrobble = self._store.find_scrobble(song.video_id)
+
+                if existing_scrobble:
+                    new_max = max(
+                        existing_scrobble.max_array_position or position, position
+                    )
+                    self._store.update_scrobble_position(
+                        existing_scrobble.video_id, position, new_max
+                    )
+                else:
+                    self._store.insert_scrobble(song, position, position)
+
+                if should_scrobble:
+                    timestamp = self.scrobbler.calculate_timestamp(
+                        scrobble_position,
+                        total_to_scrobble,
+                        window_start,
+                        window_end,
+                    )
+                    action = "NEW" if reason == "new_song" else "RE-SCROBBLE"
+
+                    success = self.scrobbler.scrobble_song(
+                        song, self.session, timestamp
                     )
 
-                    if existing_scrobble:
-                        new_max = max(
-                            existing_scrobble.max_array_position or position, position
-                        )
-                        self.store.update_scrobble_position(
-                            existing_scrobble.id, position, new_max
-                        )
+                    if success:
+                        songs_scrobbled += 1
+                        log_info(f'{action}: "{song.title}" by {song.artist}')
+                        scrobble_position += 1
                     else:
-                        self.store.insert_scrobble(
-                            song.title, song.artist, song.album, position, position
+                        log_info(
+                            f'FAILED: "{song.title}" by {song.artist} (Last.fm rejected)'
                         )
 
-                    if should_scrobble:
-                        timestamp = self.scrobbler.calculate_timestamp(
-                            scrobble_position,
-                            total_to_scrobble,
-                            window_start,
-                            window_end,
-                        )
-                        action = "NEW" if reason == "new_song" else "RE-SCROBBLE"
-
-                        success = self.scrobbler.scrobble_song(
-                            song, self.session, timestamp
-                        )
-
-                        if success:
-                            songs_scrobbled += 1
-                            log_info(f'{action}: "{song.title}" by {song.artist}')
-                            scrobble_position += 1
-                        else:
-                            log_info(
-                                f'FAILED: "{song.title}" by {song.artist} (Last.fm rejected)'
-                            )
+                self._store.save()
 
             except Exception as error:
                 failure_type = self.scrobbler.categorize_error(error)
@@ -343,17 +335,17 @@ class ImprovedProcess:
                     break
 
         if not self.dry_run and not had_fatal_error:
-            with self.store.transaction():
-                self.store.update_last_success_at(now)
+            self._store.last_success_at = now
+            self._store.save()
 
         print()
         if self.dry_run:
             log_info(
-                f"Run complete: {len(today_songs)} today, {songs_scrobbled} would be scrobbled"
+                f"Run complete: {len(today_tracks)} today, {songs_scrobbled} would be scrobbled"
             )
         else:
             log_info(
-                f"Run complete: {len(today_songs)} today, {songs_scrobbled} scrobbled, "
+                f"Run complete: {len(today_tracks)} today, {songs_scrobbled} scrobbled, "
                 f"{len(songs_to_process)} processed"
             )
 
@@ -425,7 +417,7 @@ def main():
     parser.add_argument(
         "--set-last-success",
         metavar="<ISO 8601>",
-        help="Manually set run_state.last_success_at before the run (manual catch-up); rejected if in the future",
+        help="Manually set run_state.last_success_at before the run (manual catch-up). Rejected if in the future",
     )
     args = parser.parse_args()
 
@@ -448,8 +440,7 @@ def main():
             to_datetime = parsed
             log_info(f"Scrobbling to time: {to_datetime}")
 
-        store = Store()
-        store.migrate()
+        store = DataStore(Path(DATA_JSON_PATH))
 
         anchor_override: int | None = None
         if args.set_last_success:
@@ -458,15 +449,15 @@ def main():
                 log_error("--set-last-success must be in the past")
                 return 78
             anchor_override = int(anchor.timestamp())
-            old = store.get_last_success_at()
+            old = store.last_success_at
             if args.dry_run:
                 log_info(
                     f"[DRY RUN] Would set last_success_at: {_format_ts(old)} -> {_format_ts(anchor_override)} "
                     f"(not written, using in memory for this run)"
                 )
             else:
-                with store.transaction():
-                    store.update_last_success_at(anchor_override)
+                store.last_success_at = anchor_override
+                store.save()
                 log_info(
                     f"last_success_at manually set: {_format_ts(old)} -> {_format_ts(anchor_override)}"
                 )
