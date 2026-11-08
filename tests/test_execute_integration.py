@@ -19,10 +19,9 @@ os.environ.setdefault("LAST_FM_API", "dummy")
 os.environ.setdefault("LAST_FM_API_SECRET", "dummy")
 os.environ.setdefault("LASTFM_SESSION", "dummy")
 
-import scrobble_utils
-import scrobbler
-from errors import FailureType
-from store import DataStore
+from ytscrobbler import DATA_JSON_PATH, scrobble_utils, scrobbler
+from ytscrobbler.errors import FailureType
+from ytscrobbler.store import DataStore
 
 
 def api_song(
@@ -77,7 +76,7 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
         self.addCleanup(self.tmpdir.cleanup)
 
     def new_process(self, dry_run=False, to_datetime=None):
-        store = DataStore(Path(scrobbler.DATA_JSON_PATH))
+        store = DataStore(Path(DATA_JSON_PATH))
         return scrobbler.ImprovedProcess(
             store,
             self.ytmusic,
@@ -104,7 +103,7 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
         self.assertEqual(self.scrobbled, [])
         self.assertEqual(self.stored(process), [("Song1", 1), ("Song2", 2)])
         # The run anchor is persisted to disk, not just kept in memory.
-        self.assertIsNotNone(DataStore(Path(scrobbler.DATA_JSON_PATH)).last_success_at)
+        self.assertIsNotNone(DataStore(Path(DATA_JSON_PATH)).last_success_at)
 
     def test_nominal_run_scrobbles_new_song_only(self):
         self.history[:] = [SONG_1, SONG_2]
@@ -246,7 +245,7 @@ class ExecuteIntegrationTestCase(unittest.TestCase):
     def test_dry_run_never_writes_to_the_database(self):
         self.history[:] = [SONG_1, SONG_2]
         process = self.new_process(dry_run=True)
-        data_path = Path(scrobbler.DATA_JSON_PATH)
+        data_path = Path(DATA_JSON_PATH)
 
         self.assertFalse(data_path.exists())
         process.execute()

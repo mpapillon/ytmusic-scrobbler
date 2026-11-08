@@ -16,9 +16,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("LAST_FM_API", "dummy")
 os.environ.setdefault("LAST_FM_API_SECRET", "dummy")
 
-import lastpy
-import scrobbler
-from errors import LastFmError
+from ytscrobbler import lastpy, scrobbler
+from ytscrobbler.errors import LastFmError
 
 NOT_AUTHORIZED = '<lfm status="failed"><error code="14">This token has not been authorized</error></lfm>'
 INVALID_SIGNATURE = '<lfm status="failed"><error code="13">Invalid method signature supplied</error></lfm>'
@@ -30,7 +29,7 @@ SESSION_OK = (
 
 
 class TestGetSession(unittest.TestCase):
-    @patch("lastpy.requests.post")
+    @patch("ytscrobbler.lastpy.requests.post")
     def test_returns_error_payload_instead_of_raising(self, post):
         """Regression: the caller needs the code 14 payload to decide to retry."""
         post.return_value = Mock(text=NOT_AUTHORIZED)
@@ -42,10 +41,10 @@ class TestGetTokenPolling(unittest.TestCase):
     def setUp(self):
         self.process = scrobbler.ImprovedProcess(Mock(), Mock(), datetime.now())
 
-    @patch("scrobbler.set_key")
-    @patch("scrobbler.time.sleep")
-    @patch("scrobbler.lastpy.get_session")
-    @patch("scrobbler.lastpy.get_token", return_value="request-token")
+    @patch("ytscrobbler.scrobbler.dotenv.set_key")
+    @patch("ytscrobbler.scrobbler.time.sleep")
+    @patch("ytscrobbler.scrobbler.lastpy.get_session")
+    @patch("ytscrobbler.scrobbler.lastpy.get_token", return_value="request-token")
     def test_retries_until_token_is_authorized(
         self, _get_token, get_session, sleep, set_key
     ):
@@ -59,10 +58,10 @@ class TestGetTokenPolling(unittest.TestCase):
         sleep.assert_called_with(5)
         set_key.assert_called_once_with(".env", "LASTFM_SESSION", SESSION_KEY)
 
-    @patch("scrobbler.set_key")
-    @patch("scrobbler.time.sleep")
-    @patch("scrobbler.lastpy.get_session", return_value=INVALID_SIGNATURE)
-    @patch("scrobbler.lastpy.get_token", return_value="request-token")
+    @patch("ytscrobbler.scrobbler.dotenv.set_key")
+    @patch("ytscrobbler.scrobbler.time.sleep")
+    @patch("ytscrobbler.scrobbler.lastpy.get_session", return_value=INVALID_SIGNATURE)
+    @patch("ytscrobbler.scrobbler.lastpy.get_token", return_value="request-token")
     def test_invalid_signature_fails_fast(
         self, _get_token, _get_session, sleep, _set_key
     ):
@@ -71,10 +70,10 @@ class TestGetTokenPolling(unittest.TestCase):
 
         sleep.assert_not_called()
 
-    @patch("scrobbler.set_key")
-    @patch("scrobbler.time.sleep")
-    @patch("scrobbler.lastpy.get_session", return_value=NOT_AUTHORIZED)
-    @patch("scrobbler.lastpy.get_token", return_value="request-token")
+    @patch("ytscrobbler.scrobbler.dotenv.set_key")
+    @patch("ytscrobbler.scrobbler.time.sleep")
+    @patch("ytscrobbler.scrobbler.lastpy.get_session", return_value=NOT_AUTHORIZED)
+    @patch("ytscrobbler.scrobbler.lastpy.get_token", return_value="request-token")
     def test_gives_up_after_five_minutes(
         self, _get_token, get_session, sleep, _set_key
     ):

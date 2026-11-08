@@ -8,7 +8,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models import Track
+from ytscrobbler.models import Track
 
 
 def api_item(**overrides):

@@ -2,7 +2,8 @@ FROM python:3.14-alpine
 
 RUN apk add --no-cache tzdata
 
-ENV PYTHONUNBUFFERED=1 \
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
 WORKDIR /app
@@ -16,4 +17,4 @@ COPY . .
 
 WORKDIR /data
 
-ENTRYPOINT ["python", "/app/scrobbler.py"]
+ENTRYPOINT ["python", "-m", "ytscrobbler"]

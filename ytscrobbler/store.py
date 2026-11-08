@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, final
 
-from models import Scrobble, Track
+from ytscrobbler.models import Scrobble, Track
 
 
 @final

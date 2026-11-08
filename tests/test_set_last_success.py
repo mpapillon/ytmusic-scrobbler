@@ -19,10 +19,9 @@ os.environ.setdefault("LAST_FM_API", "dummy")
 os.environ.setdefault("LAST_FM_API_SECRET", "dummy")
 os.environ.setdefault("LASTFM_SESSION", "dummy")
 
-import scrobble_utils
-import scrobbler
-from scrobble_utils import start_of_day
-from store import DataStore
+from ytscrobbler import DATA_JSON_PATH, scrobble_utils, scrobbler
+from ytscrobbler import __main__ as app
+from ytscrobbler.store import DataStore
 
 
 class TmpCwdTestCase(unittest.TestCase):
@@ -49,18 +48,16 @@ class TestMainSetLastSuccess(TmpCwdTestCase):
         mock_process = Mock()
         mock_process.execute.return_value = None
         with (
-            patch.object(scrobbler, "BROWSER_JSON_PATH", self.browser_path),
-            patch.object(scrobbler, "YTMusic"),
-            patch.object(
-                scrobbler, "ImprovedProcess", return_value=mock_process
-            ) as mock_cls,
-            patch.object(sys, "argv", ["scrobbler.py", *extra_argv]),
+            patch.object(app, "BROWSER_JSON_PATH", self.browser_path),
+            patch.object(app, "YTMusic"),
+            patch.object(app, "ImprovedProcess", return_value=mock_process) as mock_cls,
+            patch.object(sys, "argv", ["ytscrobbler", *extra_argv]),
         ):
-            exit_code = scrobbler.main()
+            exit_code = app.main()
         return exit_code, mock_cls
 
     def read_anchor(self):
-        store = DataStore(Path(scrobbler.DATA_JSON_PATH))
+        store = DataStore(Path(DATA_JSON_PATH))
         return store.last_success_at
 
     def test_valid_value_is_written_and_passed_to_run(self):
@@ -74,7 +71,7 @@ class TestMainSetLastSuccess(TmpCwdTestCase):
         self.assertEqual(mock_cls.call_args.kwargs["anchor_override"], expected)
 
     def test_date_only_value_is_accepted(self):
-        midnight = start_of_day(int(time.time()))
+        midnight = scrobble_utils.start_of_day(int(time.time()))
         local_midnight = datetime.fromtimestamp(
             midnight, tz=datetime.now().astimezone().tzinfo
         )
@@ -153,7 +150,7 @@ class TestExecuteAnchorOverride(TmpCwdTestCase):
         patcher2.start()
 
     def new_process(self, anchor_override=None, dry_run=False):
-        store = DataStore(Path(scrobbler.DATA_JSON_PATH))
+        store = DataStore(Path(DATA_JSON_PATH))
         return scrobbler.ImprovedProcess(
             store,
             self.ytmusic,
@@ -182,7 +179,7 @@ class TestExecuteAnchorOverride(TmpCwdTestCase):
                 "played": "Today",
             },
         ]
-        anchor = start_of_day(int(time.time()))
+        anchor = scrobble_utils.start_of_day(int(time.time()))
         process = self.new_process(anchor_override=anchor)
 
         result = process.execute()
@@ -193,7 +190,7 @@ class TestExecuteAnchorOverride(TmpCwdTestCase):
         # started there instead of falling back to calibration/midnight guess.
         self.assertEqual(min(ts for _, ts in self.scrobbled), anchor)
         # A completed run re-anchors to now, as usual (persisted on disk).
-        last_success_at = DataStore(Path(scrobbler.DATA_JSON_PATH)).last_success_at
+        last_success_at = DataStore(Path(DATA_JSON_PATH)).last_success_at
         self.assertIsNotNone(last_success_at)
         self.assertGreater(last_success_at, anchor)
 
@@ -208,13 +205,13 @@ class TestExecuteAnchorOverride(TmpCwdTestCase):
             }
         ]
         process = self.new_process(
-            anchor_override=start_of_day(int(time.time())), dry_run=True
+            anchor_override=scrobble_utils.start_of_day(int(time.time())), dry_run=True
         )
 
         process.execute()
 
         self.assertEqual(self.scrobbled, [])
-        store = DataStore(Path(scrobbler.DATA_JSON_PATH))
+        store = DataStore(Path(DATA_JSON_PATH))
         self.assertEqual(store.get_scrobbles(), [])
         self.assertIsNone(store.last_success_at)
 

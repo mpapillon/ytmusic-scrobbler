@@ -23,13 +23,13 @@ The YouTube Music Last.fm Scrobbler is a Python application that fetches your Yo
 ### Run
 
 ```bash
-python scrobbler.py
+python -m ytscrobbler
 ```
 
 On first run you need to:
 1. **Create your YouTube Music credentials** once, with the interactive login flow:
    ```bash
-   python scrobbler.py --login
+   python -m ytscrobbler --login
    ```
 2. **Authenticate with Last.fm** - on the next run, the script opens your browser once and saves `LASTFM_SESSION` to `.env`
 
@@ -59,7 +59,7 @@ podman build -t ytmusic-scrobbler .
 Create your YouTube Music credentials **on the host** first, so `browser.json` exists before mounting it (see Quick Start):
 
 ```bash
-python scrobbler.py --login
+python -m ytscrobbler --login
 ```
 
 Always pass your timezone with `TZ` (e.g. `-e TZ=Europe/Paris`). Without it the
@@ -116,7 +116,7 @@ podman run --rm \
 
 **⚠️ Considerations:**
 - Credentials are Google session cookies, valid only while your browser session lives
-- Periodically refresh them with `python scrobbler.py --login` (the script tells you when they've expired)
+- Periodically refresh them with `python -m ytscrobbler --login` (the script tells you when they've expired)
 - Note: ytmusicapi's long-lived OAuth flow is currently broken upstream ([sigma67/ytmusicapi#813](https://github.com/sigma67/ytmusicapi/issues/813)), hence browser-header auth for now
 
 ## 📝 How It Works
@@ -150,7 +150,7 @@ LASTFM_SESSION=your_session_token
 ## 🐛 Troubleshooting
 
 **❌ "YouTube Music credentials not found: browser.json does not exist"**
-- Run `python scrobbler.py --login` to create it (see Quick Start)
+- Run `python -m ytscrobbler --login` to create it (see Quick Start)
 
 **❌ "The following entries are missing in your headers: cookie, x-goog-authuser"**
 - You copied headers from the wrong request - pick a `browse` request while signed in
@@ -165,7 +165,7 @@ You can automate the scrobbler with a cron job or a systemd timer. Any interval 
 
 ```bash
 # cron example, every 15 minutes
-*/15 * * * * cd /path/to/ytmusic-scrobbler && /path/to/python scrobbler.py
+*/15 * * * * cd /path/to/ytmusic-scrobbler && /path/to/python -m ytscrobbler
 ```
 
 Test with `--dry-run` first to preview a run without committing to Last.fm.

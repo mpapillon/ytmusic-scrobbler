@@ -1,6 +1,6 @@
 """Unit tests for update_browser_json(): the interactive browser.json refresh flow.
 
-scrobbler.setup is patched with a writer that mimics ytmusicapi.setup's
+ytmusicapi.setup is patched with a writer that mimics ytmusicapi.setup's
 file output, so the SAPISIDHASH validation step is exercised for real.
 """
 
@@ -15,8 +15,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ytmusicapi.exceptions import YTMusicUserError
 
-import scrobbler
-from errors import ConfigError
+from ytscrobbler import __main__ as app
+from ytscrobbler.errors import ConfigError
 
 VALID_HEADERS = {
     "cookie": "SID=fake",
@@ -45,8 +45,8 @@ class TestUpdateBrowserJson(unittest.TestCase):
         self.path = os.path.join(tmpdir.name, "browser.json")
 
     def run_update(self, side_effect):
-        with patch.object(scrobbler, "setup", side_effect=side_effect):
-            scrobbler.update_browser_json(self.path)
+        with patch.object(app.ytmusicapi, "setup", side_effect=side_effect):
+            app._update_browser_json(self.path)
 
     def test_valid_headers_are_saved(self):
         self.run_update(setup_writer(VALID_HEADERS))
@@ -58,12 +58,12 @@ class TestUpdateBrowserJson(unittest.TestCase):
         it must be treated as a failed attempt, not a successful update."""
         with (
             patch.object(
-                scrobbler, "setup", side_effect=setup_writer(NO_AUTH_HEADERS)
+                app.ytmusicapi, "setup", side_effect=setup_writer(NO_AUTH_HEADERS)
             ) as mock_setup,
             self.assertRaises(ConfigError),
         ):
-            scrobbler.update_browser_json(self.path)
-        self.assertEqual(mock_setup.call_count, scrobbler.MAX_BROWSER_SETUP_ATTEMPTS)
+            app._update_browser_json(self.path)
+        self.assertEqual(mock_setup.call_count, app.MAX_BROWSER_SETUP_ATTEMPTS)
 
     def test_bad_paste_then_valid_paste_succeeds(self):
         self.run_update(setup_writer(NO_AUTH_HEADERS, VALID_HEADERS))
@@ -91,13 +91,15 @@ class TestUpdateBrowserJson(unittest.TestCase):
     def test_login_flag_skips_scrobbling(self):
         """--login must exit after updating, never reaching the scrobble flow."""
         with (
-            patch.object(scrobbler, "setup", side_effect=setup_writer(VALID_HEADERS)),
-            patch.object(scrobbler, "BROWSER_JSON_PATH", self.path),
-            patch.object(sys, "argv", ["scrobbler.py", "--login"]),
-            patch.object(scrobbler, "YTMusic") as mock_ytmusic,
-            patch.object(scrobbler, "DataStore") as mock_store,
+            patch.object(
+                app.ytmusicapi, "setup", side_effect=setup_writer(VALID_HEADERS)
+            ),
+            patch.object(app, "BROWSER_JSON_PATH", self.path),
+            patch.object(sys, "argv", ["ytscrobbler", "--login"]),
+            patch.object(app, "YTMusic") as mock_ytmusic,
+            patch.object(app, "DataStore") as mock_store,
         ):
-            exit_code = scrobbler.main()
+            exit_code = app.main()
 
         self.assertEqual(exit_code, 0)
         mock_ytmusic.assert_not_called()
@@ -119,10 +121,10 @@ class TestMainCredentialLoading(unittest.TestCase):
 
     def run_main(self):
         with (
-            patch.object(scrobbler, "BROWSER_JSON_PATH", self.path),
-            patch.object(sys, "argv", ["scrobbler.py"]),
+            patch.object(app, "BROWSER_JSON_PATH", self.path),
+            patch.object(sys, "argv", ["ytscrobbler"]),
         ):
-            return scrobbler.main()
+            return app.main()
 
     def test_missing_file_prompts_login(self):
         self.assertFalse(os.path.exists(self.path))

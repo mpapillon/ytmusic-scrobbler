@@ -8,7 +8,7 @@ import xml.etree.ElementTree as ET
 import requests
 from dotenv import find_dotenv, load_dotenv
 
-from errors import LastFmError
+from ytscrobbler.errors import LastFmError
 
 load_dotenv(find_dotenv(usecwd=True))
 

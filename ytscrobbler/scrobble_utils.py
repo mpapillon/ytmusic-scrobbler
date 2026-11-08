@@ -9,10 +9,16 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import final
 
-import lastpy
-from errors import FailureType, ScrobblerError
-from models import SongToScrobble, Track
-from store import Scrobble
+from ytscrobbler import lastpy
+from ytscrobbler.errors import FailureType, ScrobblerError
+from ytscrobbler.models import Scrobble, SongToScrobble, Track
+
+
+def format_ts(ts: int | None) -> str:
+    if ts is None:
+        return "never"
+    local = datetime.fromtimestamp(ts, tz=datetime.now().astimezone().tzinfo)
+    return local.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def log_info(message: str) -> None:

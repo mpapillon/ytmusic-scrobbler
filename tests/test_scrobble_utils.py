@@ -6,13 +6,12 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models import Track
-from scrobble_utils import (
+from ytscrobbler.models import Scrobble, Track
+from ytscrobbler.scrobble_utils import (
     PositionTracker,
     ScrobbleTimestampCalculator,
     compute_scrobble_window,
 )
-from store import Scrobble
 
 
 def make_track(
